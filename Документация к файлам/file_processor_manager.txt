@@ -1,0 +1,239 @@
+# FileProcessorManager Documentation
+
+## Обзор
+
+`FileProcessorManager` — это мощный менеджер парсеров и хуков для обработки файлов различных форматов в RAG-системе. Класс обеспечивает единый интерфейс для извлечения текста из файлов с поддержкой цепочек хуков, fallback-парсеров, аналитики и batch-обработки.
+
+## Архитектура
+
+### Основные компоненты
+- **Парсеры** — специализированные функции для обработки конкретных форматов файлов
+- **Fallback-парсеры** — резервные парсеры на случай неудачи основного
+- **HookManager** — система хуков для пре- и пост-обработки данных
+- **Метаданные** — детальная информация о процессе обработки
+
+### Диаграмма архитектуры
+
+```mermaid
+graph TD
+    A[FileProcessorManager] --> B[Parser Registry]
+    A --> C[Fallback Registry]
+    A --> D[HookManager]
+    
+    B --> E[Extension-based Parsers]
+    C --> F[Universal Fallbacks]
+    D --> G[Pre-hooks]
+    D --> H[Post-hooks]
+    
+    I[File Input] --> J[Extract Text Process]
+    J --> K{Primary Parser?}
+    K -->|Yes| L[Execute Parser]
+    K -->|No| M[Try Fallbacks]
+    
+    L --> N[Apply Post-hooks]
+    M --> N
+    N --> O[Return Result]
+    
+    P[Batch Input] --> Q[Process Each File]
+    Q --> J
+```
+
+## API Reference
+
+### Конструктор
+
+```python
+def __init__(self, logger=None, hook_manager: Optional[HookManager]=None)
+```
+
+**Параметры:**
+- `logger` — логгер для записи событий (по умолчанию создается автоматически)
+- `hook_manager` — менеджер хуков для пре- и пост-обработки
+
+### Методы
+
+#### register_parser()
+```python
+def register_parser(self, extensions, parser_func)
+```
+Регистрирует парсер для указанных расширений файлов.
+
+**Параметры:**
+- `extensions` — строка или список расширений (например, `'.pdf'` или `['.doc', '.docx']`)
+- `parser_func` — функция-парсер
+
+**Пример:**
+```python
+manager.register_parser(['.txt', '.log'], text_parser)
+manager.register_parser('.pdf', pdf_parser)
+```
+
+#### register_fallback()
+```python
+def register_fallback(self, parser_func)
+```
+Регистрирует fallback-парсер, который будет использован если основные парсеры не сработали.
+
+#### extract_text()
+```python
+def extract_text(self, file_path: str, **kwargs) -> dict
+```
+Основной метод для извлечения текста из файла.
+
+**Возвращает словарь со структурой:**
+```python
+{
+    "text": str,           # Извлеченный текст
+    "success": bool,       # Успешность операции
+    "error": str | None,   # Сообщение об ошибке
+    "meta": {              # Метаданные процесса
+        "file_path": str,
+        "file_type": str,
+        "parser_chain": List[str],
+        "pre_hook_chain": List[str],
+        "post_hook_chain": List[str],
+        "partial_success": bool,      # Частичный успех
+        "partial_reason": str         # Причина частичного успеха
+    }
+}
+```
+
+#### extract_text_batch()
+```python
+def extract_text_batch(self, files: List[str], skip_partial=True, **kwargs) -> List[dict]
+```
+Batch-обработка списка файлов.
+
+**Параметры:**
+- `files` — список путей к файлам
+- `skip_partial` — пропускать файлы с частичным успехом
+- `**kwargs` — дополнительные параметры для парсеров
+
+#### get_supported_extensions()
+```python
+def get_supported_extensions(self) -> List[str]
+```
+Возвращает список поддерживаемых расширений файлов.
+
+## Алгоритм обработки
+
+### Последовательность выполнения
+
+1. **Определение парсера** — по расширению файла
+2. **Выполнение основного парсера** — если зарегистрирован
+3. **Применение пост-хуков** — обработка извлеченного текста
+4. **Проверка на частичный успех** — обработка ошибок с частичными результатами
+5. **Fallback-парсеры** — если основной парсер не сработал
+6. **Возврат результата** — с полными метаданными
+
+### Обработка ошибок
+
+Система поддерживает концепцию **частичного успеха**:
+- Парсер может вернуть текст с ошибкой
+- Такие случаи помечаются как `partial_success`
+- Позволяет сохранить частично извлеченные данные
+
+## Интеграция с системой
+
+### В контексте RAG-системы
+
+```python
+# Инициализация
+hook_manager = HookManager(logger)
+file_manager = FileProcessorManager(logger, hook_manager)
+
+# Регистрация парсеров
+file_manager.register_parser('.txt', text_parser)
+file_manager.register_parser('.pdf', pdf_parser)
+file_manager.register_parser(['.doc', '.docx'], docx_parser)
+file_manager.register_fallback(universal_textract_parser)
+
+# Обработка папки inform/
+inform_files = glob.glob('inform/**/*', recursive=True)
+results = file_manager.extract_text_batch(inform_files)
+```
+
+### Связь с другими модулями
+
+- **rag_retriever.py** — использует результаты для построения индекса
+- **hook_manager.py** — выполняет пре- и пост-обработку
+- **rag_file_utils.py** — высокоуровневая обёртка
+- **file_processors/** — конкретные парсеры форматов
+
+## Конфигурация
+
+Типичная структура парсера:
+```python
+def example_parser(file_path: str, **kwargs) -> dict:
+    try:
+        # Логика извлечения текста
+        text = extract_text_logic(file_path)
+        return {
+            "text": text,
+            "success": True,
+            "error": None,
+            "meta": {
+                "encoding": "utf-8",
+                "pages": 5
+            }
+        }
+    except Exception as e:
+        return {
+            "text": "",
+            "success": False,
+            "error": str(e),
+            "meta": {}
+        }
+```
+
+## Логирование
+
+Система ведет подробные логи:
+- **INFO** — успешная обработка, использование fallback
+- **WARNING** — частичный успех, неудача основного парсера
+- **ERROR** — полная неудача обработки файла
+
+## Производительность
+
+### Оптимизации
+- Кэширование парсеров по расширениям
+- Ленивая инициализация hook_manager
+- Batch-обработка с контролем ошибок
+- Метаданные для аналитики производительности
+
+### Мониторинг
+```python
+# Получение статистики
+extensions = file_manager.get_supported_extensions()
+results = file_manager.extract_text_batch(files)
+success_rate = len([r for r in results if r['success']]) / len(results)
+```
+
+## Расширяемость
+
+Система легко расширяется:
+1. **Новые парсеры** — через `register_parser()`
+2. **Новые хуки** — через `HookManager`
+3. **Новые форматы** — добавление в `file_processors/`
+4. **Аналитика** — через метаданные в результатах
+
+## Примеры использования
+
+### Базовое использование
+```python
+manager = FileProcessorManager()
+result = manager.extract_text("document.pdf")
+if result['success']:
+    print(f"Extracted {len(result['text'])} characters")
+```
+
+### Batch-обработка
+```python
+files = ['doc1.pdf', 'doc2.txt', 'doc3.docx']
+results = manager.extract_text_batch(files, skip_partial=False)
+for result in results:
+    if result['success']:
+        print(f"✅ {result['meta']['file_path']}")
+    else:
+        print(f"❌ {result['meta']['file_path']}: {result['error']}")
+```

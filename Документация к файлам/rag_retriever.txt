@@ -1,0 +1,293 @@
+# RAGRetriever - Документация
+
+## Обзор
+
+`RAGRetriever` - это центральный компонент системы Retrieval-Augmented Generation (RAG), предназначенный для семантического поиска по базе знаний с автоматическим управлением эмбеддингами и чанками текста. Класс обеспечивает эффективную работу с большими объемами данных, динамическое обновление базы знаний и интеллектуальный отбор релевантного контекста.
+
+## Основные возможности
+
+- **Автоматическая загрузка и сохранение** индексов FAISS, эмбеддингов и чанков
+- **Семантический поиск** с использованием векторных представлений текста  
+- **Динамическое обновление** базы знаний без полной перестройки
+- **Интеллектуальный отбор чанков** с учетом разнообразия и релевантности
+- **Подробное логирование** всех операций поиска и обработки
+- **Обработка различных форматов файлов** для построения базы знаний
+
+## Архитектура
+
+### Зависимости
+
+```python
+from .rag_file_utils import FileProcessor        # Обработка файлов разных форматов
+from .rag_chunk_tracker import ChunkTracker      # Отслеживание использования чанков  
+from .embedding_manager import EmbeddingManager  # Управление эмбеддингами и FAISS
+```
+
+### Структура данных
+
+```
+data/
+├── faiss_index.idx     # FAISS индекс для быстрого поиска
+├── embeddings.npy      # Векторные представления чанков  
+└── chunks.json         # Текстовые чанки с метаданными
+
+logs/
+├── rag.log            # Основной лог RAG операций
+├── rag_chunks.txt     # Все найденные кандидаты  
+└── rag_selected_chunks.txt  # Финально выбранные чанки
+```
+
+## API Reference
+
+### Инициализация
+
+```python
+config = {
+    "embedding_model": "all-MiniLM-L6-v2",
+    "index_path": "data/faiss_index.idx", 
+    "embeddings_path": "data/embeddings.npy",
+    "chunks_path": "data/chunks.json",
+    "chunk_size": 512,
+    "chunk_overlap": 50,
+    "max_context_chunks": 5
+}
+
+retriever = RAGRetriever(config)
+```
+
+### Основные методы
+
+#### `process_inform_folder(folder_path: str)`
+Обрабатывает папку с документами для построения базы знаний.
+
+**Параметры:**
+- `folder_path` - путь к папке с документами
+
+**Поддерживаемые форматы:** txt, pdf, docx, xlsx, csv, html, json, pptx
+
+#### `build_knowledge_base()`
+Строит векторную базу знаний из обработанных документов.
+
+**Процесс:**
+1. Генерация эмбеддингов для всех чанков
+2. Построение FAISS индекса  
+3. Сохранение всех компонентов на диск
+4. Сброс статистики использования
+
+#### `retrieve_context(query: str, max_length: Optional[int] = None) -> str`
+Основной метод для получения релевантного контекста по запросу.
+
+**Параметры:**
+- `query` - поисковый запрос
+- `max_length` - максимальная длина контекста (опционально)
+
+**Возвращает:** Объединенный текст наиболее релевантных чанков
+
+**Алгоритм:**
+1. Кодирование запроса в вектор
+2. Поиск 20 наиболее похожих чанков через FAISS
+3. Отбор разнообразных чанков через ChunkTracker
+4. Возврат топ-5 чанков в виде текста
+
+#### `update_knowledge_base(new_content: str, source: str = None)`
+Добавляет новый контент к существующей базе знаний.
+
+**Параметры:**
+- `new_content` - новый текстовый контент
+- `source` - источник контента (для логирования)
+
+**Процесс:**
+1. Разбивка нового контента на чанки
+2. Генерация эмбеддингов для новых чанков  
+3. Добавление в FAISS индекс
+4. Сохранение обновленных данных
+
+#### `chunk_text(text: str, chunk_size: int = 512, overlap: Optional[int] = None) -> List[str]`
+Разбивает текст на перекрывающиеся чанки.
+
+**Параметры:**
+- `text` - исходный текст
+- `chunk_size` - размер чанка в токенах
+- `overlap` - размер перекрытия между чанками
+
+## Логирование и мониторинг
+
+### Структура логов
+
+```python
+# logs/rag.log - основной лог
+[2024-01-20 15:30:25] [INFO] FAISS index loaded from data/faiss_index.idx
+[2024-01-20 15:30:26] [INFO] [RAG] Incoming query: 'устройство двигателя'
+[2024-01-20 15:30:27] [INFO] [RAG] Selected chunks count: 5
+
+# logs/rag_chunks.txt - детали поиска  
+chunk_id: 42
+score: 0.8523
+text: Двигатель внутреннего сгорания состоит из...
+----------------------------------------
+
+# logs/rag_selected_chunks.txt - финальный отбор
+chunk_id: 42  
+score: 0.8523
+selected_order: 1
+text: Двигатель внутреннего сгорания состоит из...
+```
+
+### Мониторинг производительности
+
+```python
+# Получение статистики
+stats = retriever.get_index_stats()
+print(stats)
+# {
+#   "total_chunks": 1547,
+#   "index_loaded": True, 
+#   "embeddings_loaded": True
+# }
+```
+
+## Конфигурация
+
+### Основные параметры
+
+| Параметр | Описание | По умолчанию |
+|----------|----------|--------------|
+| `embedding_model` | Модель для создания эмбеддингов | `all-MiniLM-L6-v2` |
+| `chunk_size` | Размер чанка в токенах | `512` |
+| `chunk_overlap` | Перекрытие между чанками | `50` |
+| `max_context_chunks` | Максимум чанков в контексте | `5` |
+
+### Пути к файлам
+
+| Параметр | Описание | По умолчанию |
+|----------|----------|--------------|
+| `index_path` | Путь к FAISS индексу | `data/faiss_index.idx` |
+| `embeddings_path` | Путь к файлу эмбеддингов | `data/embeddings.npy` |
+| `chunks_path` | Путь к файлу чанков | `data/chunks.json` |
+
+## Примеры использования
+
+### Базовый пример
+
+```python
+# Инициализация
+config = {"embedding_model": "all-MiniLM-L6-v2"}
+retriever = RAGRetriever(config)
+
+# Построение базы знаний
+retriever.process_inform_folder("./inform")
+retriever.build_knowledge_base()
+
+# Поиск контекста
+context = retriever.retrieve_context("как работает двигатель")
+print(context)
+```
+
+### Обновление базы знаний
+
+```python
+# Добавление нового контента
+new_info = "Турбонаддув увеличивает мощность двигателя за счет..."
+retriever.update_knowledge_base(new_info, source="manual_update")
+
+# Поиск с учетом новой информации  
+context = retriever.retrieve_context("турбонаддув")
+```
+
+### Пакетная обработка запросов
+
+```python
+queries = [
+    "устройство коробки передач",
+    "принцип работы тормозной системы", 
+    "диагностика неисправностей"
+]
+
+for query in queries:
+    context = retriever.retrieve_context(query)
+    print(f"Query: {query}")
+    print(f"Context: {context[:200]}...")
+    print("-" * 50)
+```
+
+## Обработка ошибок
+
+### Основные исключения
+
+```python
+try:
+    retriever.build_knowledge_base()
+except RuntimeError as e:
+    if "No chunks found" in str(e):
+        print("Необходимо сначала обработать документы")
+    
+try:  
+    context = retriever.retrieve_context("test query")
+except RuntimeError as e:
+    if "Knowledge base not loaded" in str(e):
+        print("База знаний не загружена")
+```
+
+### Проверка целостности данных
+
+```python  
+# Автоматическая проверка при загрузке
+if len(retriever.embeddings) != len(retriever.chunks):
+    print("ПРЕДУПРЕЖДЕНИЕ: Несоответствие размеров данных")
+    # База будет помечена как поврежденная
+```
+
+## Интеграция с другими компонентами
+
+### С ChunkTracker
+
+```python
+# ChunkTracker автоматически отслеживает использование
+diverse_chunks = retriever.chunk_tracker.get_diverse_chunks(candidates)
+```
+
+### С EmbeddingManager  
+
+```python
+# Автоматическое управление эмбеддингами
+embeddings = retriever.embed_mgr.encode_texts(chunks)
+index = retriever.embed_mgr.build_faiss_index(embeddings)
+```
+
+### С FileProcessor
+
+```python
+# Поддержка множества форматов файлов
+if retriever.file_processor.validate_file(filepath):
+    text = retriever.file_processor.extract_text_from_file(filepath)
+```
+
+## Оптимизация производительности
+
+### Рекомендации по настройке
+
+1. **Размер чанков:** 
+   - Для технических текстов: 256-512 токенов
+   - Для художественных текстов: 512-1024 токена
+
+2. **Количество результатов:**
+   - Начальный поиск: 20 кандидатов
+   - Финальный отбор: 3-7 чанков
+
+3. **Модель эмбеддингов:**
+   - Быстрая: `all-MiniLM-L6-v2` 
+   - Качественная: `all-mpnet-base-v2`
+
+### Мониторинг памяти
+
+```python
+import psutil
+import os
+
+process = psutil.Process(os.getpid())
+print(f"Память: {process.memory_info().rss / 1024 / 1024:.1f} MB")
+```
+
+## Заключение
+
+`RAGRetriever` предоставляет полнофункциональное решение для семантического поиска в корпоративных базах знаний. Автоматизация управления данными, подробное логирование и гибкая конфигурация делают его подходящим для production-окружений с высокими требованиями к качеству и производительности.

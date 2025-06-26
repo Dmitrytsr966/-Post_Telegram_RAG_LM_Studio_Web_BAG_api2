@@ -1,0 +1,315 @@
+# WebSearchClient - Документация
+
+## Описание
+
+`WebSearchClient` - это класс для выполнения веб-поиска через API Serper.dev с расширенными возможностями логирования, обработки ошибок и управления контентом. Модуль предназначен для интеграции в RAG-системы и автоматизированные системы генерации контента.
+
+## Основные возможности
+
+- Выполнение поисковых запросов через Serper.dev API
+- Автоматическая обработка ошибок и повторные попытки
+- Подробное логирование всех операций
+- Сохранение результатов в локальную базу данных
+- Фильтрация и дедупликация результатов
+- Управление лимитами скорости API
+
+## Установка и требования
+
+```python
+# Требуемые зависимости
+import logging
+import requests
+import time
+from typing import List, Dict
+from pathlib import Path
+from datetime import datetime
+```
+
+## Инициализация
+
+```python
+from modules.external_apis.web_search import WebSearchClient
+
+# Базовая инициализация
+client = WebSearchClient(
+    api_key="your_serper_api_key",
+    endpoint="https://google.serper.dev/search",  # по умолчанию
+    results_limit=10  # по умолчанию
+)
+```
+
+### Параметры конструктора
+
+| Параметр | Тип | Описание | По умолчанию |
+|----------|-----|----------|--------------|
+| `api_key` | `str` | API ключ для Serper.dev | Обязательный |
+| `endpoint` | `str` | URL эндпоинта API | `"https://google.serper.dev/search"` |
+| `results_limit` | `int` | Максимальное количество результатов | `10` |
+
+## Основные методы
+
+### search(query: str, num_results: int = None) -> List[Dict]
+
+Выполняет поисковый запрос и возвращает список результатов.
+
+**Параметры:**
+- `query` (str): Поисковый запрос
+- `num_results` (int, optional): Количество результатов (переопределяет `results_limit`)
+
+**Возвращает:**
+- `List[Dict]`: Список словарей с результатами поиска
+
+**Пример использования:**
+```python
+results = client.search("Python machine learning", num_results=5)
+for result in results:
+    print(f"Title: {result.get('title')}")
+    print(f"URL: {result.get('link')}")
+    print(f"Snippet: {result.get('snippet')}")
+    print("---")
+```
+
+**Структура результата:**
+```python
+{
+    "title": "Заголовок страницы",
+    "link": "https://example.com",
+    "snippet": "Описание страницы...",
+    "position": 1,
+    "date": "26 июня 2025"
+}
+```
+
+### extract_content(search_results: List[Dict]) -> str
+
+Извлекает текстовый контент из результатов поиска.
+
+**Параметры:**
+- `search_results` (List[Dict]): Результаты поиска
+
+**Возвращает:**
+- `str`: Объединенный текст всех сниппетов
+
+**Пример:**
+```python
+results = client.search("искусственный интеллект")
+content = client.extract_content(results)
+print(content)
+```
+
+### filter_relevant_results(results: List[Dict], topic: str) -> List[Dict]
+
+Фильтрует результаты по релевантности к теме.
+
+**Параметры:**
+- `results` (List[Dict]): Исходные результаты поиска
+- `topic` (str): Тема для фильтрации
+
+**Возвращает:**
+- `List[Dict]`: Отфильтрованные результаты
+
+### save_to_inform(content: str, topic: str, source: str = "web") -> None
+
+Сохраняет найденный контент в локальную базу данных.
+
+**Параметры:**
+- `content` (str): Контент для сохранения
+- `topic` (str): Тема контента
+- `source` (str): Источник контента
+
+**Особенности:**
+- Создает папку `inform/web/` если она не существует
+- Сохраняет в режиме добавления (append)
+- Добавляет временную метку
+
+**Пример:**
+```python
+results = client.search("blockchain technology")
+content = client.extract_content(results)
+client.save_to_inform(content, "blockchain", "web_search")
+```
+
+### format_search_context(results: List[Dict]) -> str
+
+Форматирует результаты поиска для использования в контексте RAG.
+
+**Параметры:**
+- `results` (List[Dict]): Результаты поиска
+
+**Возвращает:**
+- `str`: Отформатированный текст с источниками
+
+## Вспомогательные методы
+
+### deduplicate_results(results: List[Dict]) -> List[Dict]
+
+Удаляет дублирующиеся результаты по URL.
+
+### clean_search_content(content: str) -> str
+
+Очищает контент от невидимых символов и лишних пробелов.
+
+### validate_search_results(results: List[Dict]) -> bool
+
+Проверяет валидность результатов поиска.
+
+### get_search_stats() -> dict
+
+Возвращает статистику настроек клиента.
+
+## Обработка ошибок
+
+Класс автоматически обрабатывает следующие ошибки:
+
+- **403 Forbidden**: Неверный или истекший API ключ
+- **429 Too Many Requests**: Превышение лимита запросов (автоматический retry)
+- **Timeout**: Таймаут запроса (15 секунд)
+- **Network errors**: Сетевые ошибки
+
+### Пример обработки ошибок:
+
+```python
+results = client.search("test query")
+if not results:
+    print("Поиск не дал результатов или произошла ошибка")
+else:
+    print(f"Найдено {len(results)} результатов")
+```
+
+## Логирование
+
+Все операции подробно логируются:
+
+- Запросы и ответы сохраняются в `logs/web_search.log`
+- Используется стандартный Python logging
+- Логируются ошибки, предупреждения и информационные сообщения
+
+### Структура лога:
+
+```
+2025-06-26T10:30:00 | QUERY: machine learning python
+  timestamp: 2025-06-26T10:30:00.123456
+  endpoint: https://google.serper.dev/search
+  results_limit: 10
+  http_status: 200
+  results_count: 8
+  response_text: {"organic":[...]}
+```
+
+## Интеграция с RAG-системой
+
+Класс специально разработан для интеграции в RAG-системы:
+
+```python
+# Полный пример использования в RAG
+def enrich_context_with_web_search(topic: str, rag_context: str) -> str:
+    client = WebSearchClient(api_key="your_key")
+    
+    # Поиск информации
+    results = client.search(topic, num_results=5)
+    
+    if results:
+        # Извлечение контента
+        web_content = client.extract_content(results)
+        
+        # Сохранение в базу знаний
+        client.save_to_inform(web_content, topic, "web_search")
+        
+        # Форматирование для контекста
+        formatted_context = client.format_search_context(results)
+        
+        # Объединение с существующим контекстом RAG
+        enriched_context = f"{rag_context}\n\nДополнительная информация из веб-поиска:\n{formatted_context}"
+        
+        return enriched_context
+    
+    return rag_context
+```
+
+## Конфигурация
+
+Рекомендуемые настройки для `config.json`:
+
+```json
+{
+    "web_search": {
+        "api_key": "your_serper_api_key",
+        "endpoint": "https://google.serper.dev/search",
+        "results_limit": 10,
+        "timeout": 15,
+        "max_retries": 2,
+        "retry_delay": 2
+    }
+}
+```
+
+## Ограничения и рекомендации
+
+### Лимиты API:
+- Serper.dev предоставляет бесплатный тариф с ограничениями
+- Рекомендуется мониторить использование квоты
+- Реализована обработка ошибки 429 (Too Many Requests)
+
+### Производительность:
+- Таймаут запроса: 15 секунд
+- Автоматические повторы при сбоях
+- Логирование для мониторинга производительности
+
+### Безопасность:
+- API ключ должен храниться в безопасном месте
+- Не включайте API ключ в публичный код
+- Используйте переменные окружения или конфигурационные файлы
+
+## Примеры использования
+
+### Базовый поиск:
+```python
+client = WebSearchClient(api_key="your_key")
+results = client.search("Python tutorials")
+print(f"Найдено {len(results)} результатов")
+```
+
+### Поиск с сохранением:
+```python
+client = WebSearchClient(api_key="your_key")
+results = client.search("machine learning algorithms")
+content = client.extract_content(results)
+client.save_to_inform(content, "ml_algorithms", "web")
+```
+
+### Интеграция с системой промптов:
+```python
+def get_enriched_prompt(topic: str, base_prompt: str) -> str:
+    client = WebSearchClient(api_key="your_key")
+    results = client.search(f"{topic} latest news trends")
+    
+    if results:
+        web_context = client.format_search_context(results)
+        return base_prompt.replace("{CONTEXT}", web_context)
+    
+    return base_prompt.replace("{CONTEXT}", "Контекст недоступен")
+```
+
+## Troubleshooting
+
+### Частые проблемы:
+
+1. **403 Forbidden**: Проверьте правильность API ключа
+2. **Пустые результаты**: Проверьте сетевое соединение и статус API Serper.dev
+3. **Таймауты**: Увеличьте timeout или проверьте скорость интернет-соединения
+4. **Ошибки сохранения**: Проверьте права доступа к папке `inform/`
+
+### Отладка:
+
+Включите подробное логирование:
+```python
+import logging
+logging.basicConfig(level=logging.DEBUG)
+
+client = WebSearchClient(api_key="your_key")
+# Теперь все операции будут подробно логироваться
+```
+
+## Заключение
+
+`WebSearchClient` предоставляет надежный и гибкий интерфейс для веб-поиска в RAG-системах. Класс обеспечивает автоматическую обработку ошибок, подробное логирование и удобные методы для работы с результатами поиска.

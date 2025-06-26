@@ -1,0 +1,240 @@
+# TelegramClient Documentation
+
+## Обзор
+
+`TelegramClient` — это класс для автоматической отправки сообщений и медиафайлов в Telegram каналы через Bot API. Класс обеспечивает надежную доставку с повторными попытками, валидацией длины сообщений и обработкой различных типов медиа.
+
+## Основные возможности
+
+- ✅ Отправка текстовых сообщений с поддержкой HTML/Markdown разметки
+- ✅ Отправка медиафайлов (фото, видео, документы) с подписями
+- ✅ Автоматические повторные попытки при ошибках сети
+- ✅ Валидация длины сообщений по стандартам Telegram API
+- ✅ Обработка rate limiting (429 ошибки)
+- ✅ Логирование всех операций
+- ✅ Поддержка UTF-16 подсчета символов (как в Telegram)
+
+## Инициализация
+
+```python
+from telegram_client import TelegramClient
+
+config = {
+    "max_text_length": 4096,
+    "max_caption_length": 1024,
+    "parse_mode": "HTML",
+    "disable_web_page_preview": True,
+    "retry_attempts": 3,
+    "retry_delay": 2
+}
+
+client = TelegramClient(
+    token="YOUR_BOT_TOKEN",
+    channel_id="@your_channel",
+    config=config
+)
+```
+
+## Параметры конфигурации
+
+| Параметр | Тип | По умолчанию | Описание |
+|----------|-----|--------------|----------|
+| `max_text_length` | int | 4096 | Максимальная длина текстового сообщения |
+| `max_caption_length` | int | 1024 | Максимальная длина подписи к медиа |
+| `parse_mode` | str | "HTML" | Режим парсинга: "HTML", "Markdown" или None |
+| `disable_web_page_preview` | bool | True | Отключить превью ссылок |
+| `retry_attempts` | int | 3 | Количество повторных попыток |
+| `retry_delay` | int | 2 | Задержка между попытками (сек) |
+
+## Основные методы
+
+### send_text_message(text: str) → bool
+
+Отправляет текстовое сообщение в канал.
+
+```python
+success = client.send_text_message("Привет, мир!")
+if success:
+    print("Сообщение отправлено")
+else:
+    print("Ошибка отправки")
+```
+
+**Особенности:**
+- Автоматически проверяет длину сообщения
+- Применяет форматирование согласно `parse_mode`
+- Возвращает `True` при успешной отправке
+
+### send_media_message(text: str, media_path: str) → bool
+
+Отправляет медиафайл с подписью.
+
+```python
+success = client.send_media_message(
+    text="Описание изображения",
+    media_path="path/to/image.jpg"
+)
+```
+
+**Поддерживаемые форматы:**
+- **Фото:** jpg, jpeg, png, webp
+- **Видео:** mp4, mov, avi  
+- **Документы:** pdf, docx, txt, zip
+
+### validate_message_length(text: str, has_media: bool) → bool
+
+Проверяет, соответствует ли длина текста лимитам Telegram.
+
+```python
+# Для текстового сообщения
+is_valid = client.validate_message_length("Мой текст", has_media=False)
+
+# Для подписи к медиа
+is_valid = client.validate_message_length("Подпись", has_media=True)
+```
+
+## Служебные методы
+
+### check_bot_permissions() → Dict[str, any]
+
+Получает информацию о боте и его правах.
+
+```python
+bot_info = client.check_bot_permissions()
+print(f"Имя бота: {bot_info.get('result', {}).get('first_name')}")
+```
+
+### get_channel_info() → Dict[str, any]
+
+Получает информацию о канале.
+
+```python
+channel_info = client.get_channel_info()
+print(f"Название канала: {channel_info.get('result', {}).get('title')}")
+```
+
+### get_send_stats() → dict
+
+Возвращает статистику настроек клиента.
+
+```python
+stats = client.get_send_stats()
+# Возвращает: channel_id, token_hash, parse_mode, retry_attempts
+```
+
+## Обработка ошибок
+
+Класс автоматически обрабатывает различные типы ошибок:
+
+### Rate Limiting (429)
+```python
+# Автоматически ждет время, указанное в retry_after
+# Логирует: "Rate limited. Retrying in 5s..."
+```
+
+### Клиентские ошибки (400, 403)
+```python
+# Немедленно возвращает False без повторов
+# Логирует детали ошибки от Telegram API
+```
+
+### Сетевые ошибки
+```python
+# Выполняет повторные попытки согласно retry_attempts
+# Логирует каждую неудачную попытку
+```
+
+## Логирование
+
+Все операции логируются с помощью Python logging:
+
+```python
+import logging
+
+# Настройка логгера
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("TelegramClient")
+
+# Примеры логов:
+# INFO: [Telegram] sendMessage successful.
+# WARNING: Rate limited. Retrying in 5s...
+# ERROR: All attempts failed for sendMessage.
+```
+
+## Особенности работы с кодировкой
+
+Класс использует корректный подсчет символов UTF-16 (code units), как требует Telegram API:
+
+```python
+# Метод _telegram_code_units учитывает:
+# - Эмодзи как 2+ code units
+# - Специальные символы Unicode
+# - Правильное соответствие лимитам Telegram
+```
+
+## Интеграция с RAG системой
+
+В контексте вашего проекта автопостинга:
+
+```python
+# Пример использования в main.py
+def publish_content(topic, content, media_file=None):
+    if media_file:
+        # Ограничение для подписи к медиа
+        if len(content) > 1024:
+            content = content[:1021] + "..."
+        return telegram_client.send_media_message(content, media_file)
+    else:
+        # Полный лимит для текста
+        if len(content) > 4096:
+            content = content[:4093] + "..."
+        return telegram_client.send_text_message(content)
+```
+
+## Безопасность
+
+- Токен бота не логируется (используется хеш)
+- Таймауты предотвращают зависание запросов
+- Graceful handling всех исключений
+- Валидация файлов перед отправкой
+
+## Требования
+
+```python
+# requirements.txt
+requests>=2.25.0
+```
+
+## Пример полного использования
+
+```python
+import logging
+from telegram_client import TelegramClient
+
+# Настройка
+logging.basicConfig(level=logging.INFO)
+
+config = {
+    "max_text_length": 4096,
+    "max_caption_length": 1024,
+    "parse_mode": "HTML",
+    "retry_attempts": 3
+}
+
+client = TelegramClient("YOUR_TOKEN", "@channel", config)
+
+# Проверка бота
+bot_info = client.check_bot_permissions()
+if bot_info:
+    print("Бот активен и готов к работе")
+
+# Отправка текста
+text = "<b>Важное сообщение</b>\nТекст с HTML разметкой"
+if client.send_text_message(text):
+    print("Текст отправлен успешно")
+
+# Отправка медиа
+caption = "Описание к изображению"
+if client.send_media_message(caption, "image.jpg"):
+    print("Медиа отправлено успешно")
+```

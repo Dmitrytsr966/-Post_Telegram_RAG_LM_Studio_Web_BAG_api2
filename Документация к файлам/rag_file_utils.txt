@@ -1,0 +1,355 @@
+# RAG File Utils - Документация
+
+## Обзор
+
+`RAGFileUtils` — это мощная система для извлечения текста и метаданных из файлов различных форматов в рамках RAG (Retrieval-Augmented Generation) пайплайна. Модуль предоставляет единый интерфейс для обработки множества форматов файлов с поддержкой batch-обработки, системы хуков и детальной аналитики.
+
+## Архитектура
+
+### Основные компоненты
+
+1. **RAGFileUtils** — главный класс-оркестратор
+2. **FileProcessor** — адаптер для интеграции с RAGRetriever
+3. **FileProcessorManager** — менеджер парсеров файлов
+4. **HookManager** — система хуков для пре/пост обработки
+
+### Поддерживаемые форматы файлов
+
+| Формат | Расширения | Парсер |
+|--------|------------|--------|
+| Текстовые файлы | `.txt` | `rag_txt.py` |
+| CSV файлы | `.csv` | `rag_csv.py` |
+| Excel файлы | `.xlsx`, `.xls` | `rag_excel.py` |
+| PDF документы | `.pdf` | `rag_pdf.py` |
+| Word документы | `.docx` | `rag_docx.py` |
+| HTML файлы | `.html`, `.htm` | `rag_html.py` |
+| Markdown файлы | `.md`, `.markdown` | `rag_markdown.py` |
+| JSON файлы | `.json` | `rag_json.py` |
+| PowerPoint | `.pptx` | `rag_pptx.py` |
+| Аудио файлы | `.mp3`, `.wav`, `.flac` | `rag_audio.py` |
+| Видео файлы | `.mp4`, `.avi`, `.mov` | `rag_video.py` |
+| Fallback | Любые другие | `rag_fallback_textract.py` |
+
+## Классы и методы
+
+### Класс RAGFileUtils
+
+#### Инициализация
+
+```python
+def __init__(self, logger: Optional[logging.Logger] = None, hooks_config: Optional[dict] = None)
+```
+
+**Параметры:**
+- `logger` - логгер для записи событий (опционально)
+- `hooks_config` - конфигурация хуков в формате:
+  ```json
+  {
+    "pre": {
+      "hook_name": {"param1": "value1"}
+    },
+    "post": {
+      "hook_name": {"param1": "value1"}
+    }
+  }
+  ```
+
+#### Основные методы
+
+##### extract_text()
+
+```python
+def extract_text(self, file_path: str, **kwargs) -> Dict[str, Any]
+```
+
+Извлекает текст и метаданные из одного файла.
+
+**Параметры:**
+- `file_path` - путь к файлу
+- `**kwargs` - дополнительные параметры для парсера
+
+**Возвращает:**
+```python
+{
+    "text": str,           # Извлеченный текст
+    "success": bool,      # Статус успешности
+    "error": str,         # Описание ошибки (если есть)
+    "meta": {             # Метаданные
+        "file_path": str,
+        "chars": int,
+        "lang": str,
+        "partial_success": bool
+    }
+}
+```
+
+##### extract_text_batch()
+
+```python
+def extract_text_batch(
+    self,
+    dir_path: str,
+    pattern: str = "**/*",
+    recursive: bool = True,
+    skip_partial: bool = True,
+    **kwargs
+) -> List[Dict[str, Any]]
+```
+
+Batch-обработка множества файлов в директории.
+
+**Параметры:**
+- `dir_path` - путь к директории
+- `pattern` - паттерн поиска файлов (glob-синтаксис)
+- `recursive` - рекурсивный поиск в поддиректориях
+- `skip_partial` - пропускать частично обработанные файлы
+
+**Возвращает:** список результатов в том же формате, что и `extract_text()`
+
+##### get_supported_extensions()
+
+```python
+def get_supported_extensions(self) -> List[str]
+```
+
+Возвращает список всех поддерживаемых расширений файлов.
+
+#### Методы аналитики
+
+##### get_stats_from_results()
+
+```python
+def get_stats_from_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]
+```
+
+Агрегирует статистику по batch-результатам.
+
+**Возвращает:**
+```python
+{
+    "total": int,                    # Общее количество файлов
+    "success": int,                  # Успешно обработано
+    "partial": int,                  # Частично обработано
+    "success_rate": float,           # Коэффициент успешности
+    "avg_length": float,             # Средняя длина текста
+    "lang_distribution": dict,       # Распределение по языкам
+    "errors": list                   # Список ошибок
+}
+```
+
+##### get_session_errors()
+
+```python
+def get_session_errors(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]
+```
+
+Возвращает детализированный список ошибок обработки.
+
+#### Методы фильтрации
+
+##### filter_results_by_lang()
+
+```python
+def filter_results_by_lang(self, results: List[Dict[str, Any]], lang_code: str) -> List[Dict[str, Any]]
+```
+
+Фильтрует результаты по языку.
+
+##### filter_results_by_success()
+
+```python
+def filter_results_by_success(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]
+```
+
+Возвращает только успешно обработанные файлы.
+
+#### Утилиты
+
+##### save_results_to_json()
+
+```python
+def save_results_to_json(self, results: List[Dict[str, Any]], out_path: str) -> None
+```
+
+Сохраняет результаты batch-обработки в JSON-файл.
+
+### Класс FileProcessor
+
+Адаптер для интеграции с другими компонентами RAG-системы.
+
+#### extract_text_from_file()
+
+```python
+def extract_text_from_file(self, file_path: str) -> str
+```
+
+Извлекает только текст из файла (упрощенный интерфейс).
+
+#### validate_file()
+
+```python
+def validate_file(self, file_path: str) -> bool
+```
+
+Проверяет, поддерживается ли формат файла.
+
+## Система хуков
+
+Модуль поддерживает систему хуков для пре- и пост-обработки данных:
+
+### Типы хуков
+
+- **Pre-hooks** - выполняются перед парсингом файла
+- **Post-hooks** - выполняются после парсинга файла
+
+### Доступные хуки
+
+- `lower_case` - приведение к нижнему регистру
+- `remove_stopwords` - удаление стоп-слов
+- `remove_punctuation` - удаление пунктуации
+- `strip_html` - удаление HTML-тегов
+- `strip_markdown` - удаление Markdown-разметки
+- `remove_empty_lines` - удаление пустых строк
+- `remove_extra_spaces` - удаление лишних пробелов
+- `custom_replace` - пользовательские замены
+
+## Примеры использования
+
+### Обработка одного файла
+
+```python
+from rag_file_utils import RAGFileUtils
+
+# Инициализация
+rag_utils = RAGFileUtils()
+
+# Извлечение текста
+result = rag_utils.extract_text("document.pdf")
+
+if result["success"]:
+    print(f"Текст: {result['text'][:100]}...")
+    print(f"Длина: {result['meta']['chars']} символов")
+    print(f"Язык: {result['meta']['lang']}")
+else:
+    print(f"Ошибка: {result['error']}")
+```
+
+### Batch-обработка директории
+
+```python
+# Обработка всех файлов в папке
+results = rag_utils.extract_text_batch(
+    dir_path="./documents",
+    pattern="**/*.pdf",
+    recursive=True
+)
+
+# Получение статистики
+stats = rag_utils.get_stats_from_results(results)
+print(f"Обработано: {stats['success']}/{stats['total']}")
+print(f"Успешность: {stats['success_rate']*100:.1f}%")
+
+# Фильтрация успешных результатов
+successful = rag_utils.filter_results_by_success(results)
+
+# Сохранение результатов
+rag_utils.save_results_to_json(successful, "processed_documents.json")
+```
+
+### Использование с хуками
+
+```python
+# Конфигурация хуков
+hooks_config = {
+    "pre": {
+        "strip_html": {},
+        "remove_extra_spaces": {}
+    },
+    "post": {
+        "lower_case": {},
+        "remove_stopwords": {"language": "russian"}
+    }
+}
+
+# Инициализация с хуками
+rag_utils = RAGFileUtils(hooks_config=hooks_config)
+
+result = rag_utils.extract_text("webpage.html")
+```
+
+### Интеграция с RAG Retriever
+
+```python
+from rag_file_utils import FileProcessor
+
+# Создание адаптера
+processor = FileProcessor()
+
+# Проверка поддержки файла
+if processor.validate_file("document.docx"):
+    text = processor.extract_text_from_file("document.docx")
+    # Передача текста в RAG Retriever
+```
+
+## Обработка ошибок
+
+Модуль предоставляет детальную информацию об ошибках:
+
+```python
+results = rag_utils.extract_text_batch("./documents")
+errors = rag_utils.get_session_errors(results)
+
+for error in errors:
+    print(f"Файл: {error['file']}")
+    print(f"Ошибка: {error['reason']}")
+    print(f"Частично обработан: {error['partial']}")
+```
+
+## Производительность и масштабирование
+
+### Рекомендации
+
+1. **Batch-обработка** - используйте `extract_text_batch()` для множества файлов
+2. **Фильтрация** - применяйте фильтры для оптимизации обработки
+3. **Хуки** - используйте хуки только при необходимости
+4. **Логирование** - включайте логирование для мониторинга процесса
+
+### Ограничения
+
+- Размер файлов ограничен доступной памятью
+- Обработка видео/аудио требует дополнительных зависимостей
+- Fallback-парсер может быть медленным для больших файлов
+
+## Интеграция в RAG Pipeline
+
+В контексте RAG-системы автопостинга в Telegram:
+
+1. **Сбор информации** - используется для парсинга файлов из папки `inform/`
+2. **Подготовка контекста** - извлеченные тексты индексируются в FAISS
+3. **Аналитика** - статистика используется для мониторинга качества данных
+4. **Фильтрация** - результаты фильтруются по языку и качеству
+
+```python
+# Пример интеграции в основной пайплайн
+def process_inform_directory():
+    rag_utils = RAGFileUtils(logger=logger)
+    
+    # Обработка всех файлов
+    results = rag_utils.extract_text_batch(
+        dir_path="./inform",
+        recursive=True
+    )
+    
+    # Фильтрация успешных результатов
+    successful = rag_utils.filter_results_by_success(results)
+    
+    # Передача в RAG Retriever для индексации
+    for result in successful:
+        retriever.add_document(result["text"], result["meta"])
+    
+    return rag_utils.get_stats_from_results(results)
+```
+
+## Заключение
+
+`RAGFileUtils` предоставляет мощный и гибкий инструмент для обработки файлов в RAG-системах. Модульная архитектура, система хуков и подробная аналитика делают его идеальным решением для масштабных проектов обработки документов.

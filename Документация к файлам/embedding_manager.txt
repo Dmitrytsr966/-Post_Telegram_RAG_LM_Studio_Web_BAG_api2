@@ -1,0 +1,211 @@
+# Документация для EmbeddingManager
+
+## Описание
+
+`EmbeddingManager` - это класс для управления эмбеддингами и FAISS-индексом в рамках RAG-системы. Он предоставляет высокоуровневый интерфейс для векторизации текстов, построения и управления индексами для семантического поиска.
+
+## Основные функции
+
+- Векторизация текстов с использованием sentence-transformers
+- Построение и управление FAISS-индексами для быстрого поиска
+- Сохранение и загрузка индексов на диск
+- Семантический поиск похожих текстов
+
+## Архитектура
+
+```
+EmbeddingManager
+├── SentenceTransformer модель (по умолчанию: all-MiniLM-L6-v2)
+├── FAISS индекс для векторного поиска
+└── Логирование операций
+```
+
+## API Reference
+
+### Конструктор
+
+```python
+def __init__(self, model_name: str = "all-MiniLM-L6-v2")
+```
+
+**Параметры:**
+- `model_name` (str): Название модели sentence-transformers. По умолчанию "all-MiniLM-L6-v2"
+
+**Описание:** Инициализирует менеджер эмбеддингов с указанной моделью.
+
+### Методы
+
+#### `encode_texts(texts: List[str], batch_size: int = 32) -> np.ndarray`
+
+Векторизует батч текстов для последующего использования в RAG-системе.
+
+**Параметры:**
+- `texts` (List[str]): Список текстов для векторизации
+- `batch_size` (int): Размер батча для обработки (по умолчанию 32)
+
+**Возвращает:** numpy.ndarray с эмбеддингами формата float32
+
+**Использование:**
+```python
+texts = ["Первый документ", "Второй документ"]
+embeddings = embedding_manager.encode_texts(texts, batch_size=16)
+```
+
+#### `encode_single_text(text: str) -> np.ndarray`
+
+Векторизует отдельный текст (например, пользовательский запрос).
+
+**Параметры:**
+- `text` (str): Текст для векторизации
+
+**Возвращает:** numpy.ndarray с эмбеддингом
+
+**Использование:**
+```python
+query = "Как работает двигатель грузовика?"
+query_embedding = embedding_manager.encode_single_text(query)
+```
+
+#### `build_faiss_index(embeddings: np.ndarray) -> faiss.Index`
+
+Строит FAISS-индекс для быстрого семантического поиска.
+
+**Параметры:**
+- `embeddings` (np.ndarray): Двумерный массив эмбеддингов
+
+**Возвращает:** faiss.Index для поиска
+
+**Исключения:**
+- `ValueError`: Если массив эмбеддингов не двумерный
+
+**Использование:**
+```python
+index = embedding_manager.build_faiss_index(embeddings)
+```
+
+#### `save_index(index: faiss.Index, path: str) -> None`
+
+Сохраняет построенный индекс на диск для переиспользования.
+
+**Параметры:**
+- `index` (faiss.Index): Индекс для сохранения
+- `path` (str): Путь для сохранения файла
+
+**Использование:**
+```python
+embedding_manager.save_index(index, "data/faiss_index.idx")
+```
+
+#### `load_index(path: str) -> faiss.Index`
+
+Загружает ранее сохраненный индекс с диска.
+
+**Параметры:**
+- `path` (str): Путь к файлу индекса
+
+**Возвращает:** faiss.Index
+
+**Использование:**
+```python
+index = embedding_manager.load_index("data/faiss_index.idx")
+```
+
+#### `search_similar(index: Optional[faiss.Index], query_emb: np.ndarray, k: int = 5)`
+
+Выполняет семантический поиск наиболее релевантных документов.
+
+**Параметры:**
+- `index` (Optional[faiss.Index]): FAISS-индекс для поиска
+- `query_emb` (np.ndarray): Эмбеддинг запроса
+- `k` (int): Количество результатов для возврата (по умолчанию 5)
+
+**Возвращает:** Кортеж (indices, distances) - индексы и расстояния найденных документов
+
+**Исключения:**
+- `RuntimeError`: Если индекс не загружен
+
+**Использование:**
+```python
+indices, distances = embedding_manager.search_similar(index, query_embedding, k=10)
+```
+
+## Интеграция с RAG-системой
+
+### Типичный workflow:
+
+1. **Инициализация:**
+```python
+embedding_manager = EmbeddingManager("all-MiniLM-L6-v2")
+```
+
+2. **Обработка документов:**
+```python
+# Получение текстов из файлов (через file_processor_manager)
+documents = file_processor.process_directory("inform/")
+embeddings = embedding_manager.encode_texts(documents)
+```
+
+3. **Построение индекса:**
+```python
+index = embedding_manager.build_faiss_index(embeddings)
+embedding_manager.save_index(index, "data/faiss_index.idx")
+```
+
+4. **Поиск релевантного контекста:**
+```python
+query = "тема из topics.txt"
+query_emb = embedding_manager.encode_single_text(query)
+relevant_indices, scores = embedding_manager.search_similar(index, query_emb, k=5)
+```
+
+## Технические характеристики
+
+- **Модель по умолчанию:** all-MiniLM-L6-v2 (384-мерные векторы)
+- **Тип индекса:** FAISS IndexFlatIP (Inner Product)
+- **Формат данных:** float32 для оптимизации памяти
+- **Батчинг:** Поддержка обработки больших объемов данных
+
+## Зависимости
+
+```python
+sentence-transformers>=2.0.0
+faiss-cpu>=1.7.0  # или faiss-gpu для GPU
+numpy>=1.21.0
+```
+
+## Логирование
+
+Класс использует стандартную библиотеку `logging` с именем логгера "EmbeddingManager". Логируются:
+- Загрузка модели
+- Построение индекса (количество векторов и размерность)
+- Сохранение индекса
+
+## Производительность
+
+- **Векторизация:** ~1000 текстов/сек на CPU
+- **Индексация:** Линейная сложность O(n)
+- **Поиск:** Логарифмическая сложность для больших индексов
+
+## Примеры использования в контексте RAG
+
+### Полный цикл обработки:
+
+```python
+# Инициализация
+embedding_manager = EmbeddingManager()
+
+# Обработка базы знаний
+knowledge_texts = ["Грузовики требуют...", "Техническое обслуживание..."]
+knowledge_embeddings = embedding_manager.encode_texts(knowledge_texts)
+index = embedding_manager.build_faiss_index(knowledge_embeddings)
+
+# Поиск по теме
+topic = "техническое обслуживание грузовиков"
+topic_embedding = embedding_manager.encode_single_text(topic)
+relevant_docs, scores = embedding_manager.search_similar(index, topic_embedding, k=3)
+
+# Формирование контекста для LLM
+context = [knowledge_texts[i] for i in relevant_docs]
+```
+
+Этот класс является ключевым компонентом RAG-системы, обеспечивающим семантический поиск релевантной информации для генерации контентных постов в Telegram-канал.

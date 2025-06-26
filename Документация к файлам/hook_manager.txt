@@ -1,0 +1,315 @@
+# Hook Manager - Документация
+
+## Обзор
+
+`HookManager` - это система управления хуками для текстовой обработки в RAG (Retrieval-Augmented Generation) пайплайне. Модуль предоставляет гибкий механизм для регистрации и применения функций предварительной (pre) и постобработки (post) текста с поддержкой конфликтов, идемпотентности и детальной аналитики.
+
+## Архитектура
+
+### Основные компоненты
+
+1. **HookResult** - класс для хранения результатов применения хука
+2. **BaseHook** - базовый интерфейс для всех хуков
+3. **HookManager** - центральный менеджер для управления хуками
+4. **HookConflictError** - исключение для обработки конфликтов хуков
+
+## Классы и их назначение
+
+### HookResult
+
+Хранит детальную информацию о результате применения одного хука:
+
+```python
+class HookResult:
+    def __init__(self, hook_name: str, old_text: str, new_text: str, 
+                 params: dict = None, error: Optional[str] = None, 
+                 idempotent: Optional[bool] = None, summary: Optional[str] = None)
+```
+
+**Поля:**
+- `hook_name` - имя примененного хука
+- `old_text` / `new_text` - текст до и после обработки
+- `params` - параметры хука
+- `error` - описание ошибки (если возникла)
+- `idempotent` - является ли операция идемпотентной
+- `summary` - краткое описание изменений
+- `chars_changed` - количество измененных символов
+- `words_changed` - количество измененных слов
+
+**Методы:**
+- `as_dict()` - возвращает словарное представление результата
+
+### BaseHook
+
+Базовый интерфейс для реализации хуков:
+
+```python
+class BaseHook:
+    params: dict = {}
+    conflicts: Set[str] = set()
+    
+    def __call__(self, text: str, meta: dict, **context) -> str:
+        # Основная логика обработки текста
+        raise NotImplementedError
+    
+    def is_idempotent(self, old_text: str, new_text: str) -> bool:
+        # Проверка идемпотентности
+        return old_text == new_text
+    
+    def summary(self, old_text: str, new_text: str) -> str:
+        # Описание изменений
+        return f"Changed {abs(len(new_text) - len(old_text))} chars"
+    
+    @classmethod
+    def get_conflicts(cls) -> Set[str]:
+        # Возвращает список конфликтующих хуков
+        return getattr(cls, "conflicts", set())
+```
+
+**Обязательные методы:**
+- `__call__()` - основная логика обработки текста
+
+**Опциональные методы:**
+- `is_idempotent()` - проверка идемпотентности операции
+- `summary()` - генерация описания изменений
+- `get_conflicts()` - определение конфликтующих хуков
+
+### HookManager
+
+Центральный класс для управления жизненным циклом хуков:
+
+```python
+class HookManager:
+    def __init__(self, logger: Optional[logging.Logger] = None)
+```
+
+## Основные возможности
+
+### 1. Регистрация хуков
+
+Хуки можно регистрировать для конкретных форматов файлов или глобально:
+
+```python
+manager = HookManager()
+
+# Регистрация для конкретного формата
+manager.register_pre_hook(MyCleanupHook(), formats="txt")
+manager.register_post_hook(MyFormatterHook(), formats=["pdf", "docx"])
+
+# Глобальная регистрация (для всех форматов)
+manager.register_pre_hook(GlobalHook(), formats=None)
+```
+
+### 2. Применение хуков
+
+```python
+# Применение pre-хуков
+processed_text, results = manager.apply_pre_hooks(
+    text="исходный текст",
+    meta={"filename": "document.txt"},
+    fmt="txt",
+    context={"additional_param": "value"}
+)
+
+# Применение post-хуков
+final_text, results = manager.apply_post_hooks(
+    text=processed_text,
+    meta={"filename": "document.txt"},
+    fmt="txt"
+)
+```
+
+### 3. Управление конфликтами
+
+Система автоматически проверяет конфликты при регистрации:
+
+```python
+class ConflictingHook(BaseHook):
+    conflicts = {"AnotherHook"}  # Конфликтует с AnotherHook
+    
+    def __call__(self, text, meta, **context):
+        return text.upper()
+
+try:
+    manager.register_pre_hook(ConflictingHook(), "txt")
+except HookConflictError as e:
+    print(f"Конфликт обнаружен: {e}")
+```
+
+### 4. Аналитика и мониторинг
+
+```python
+# Получение зарегистрированных хуков
+pre_hooks = manager.get_registered_hooks('pre')
+post_hooks = manager.get_registered_hooks('post')
+
+# Проверка всех конфликтов
+conflicts = manager.check_all_conflicts()
+if conflicts:
+    for conflict in conflicts:
+        print(f"Конфликт: {conflict}")
+```
+
+## Примеры использования
+
+### Создание пользовательского хука
+
+```python
+class HTMLStripHook(BaseHook):
+    params = {"preserve_links": True}
+    conflicts = {"MarkdownStripHook"}  # Конфликтует с удалением markdown
+    
+    def __call__(self, text: str, meta: dict, **context) -> str:
+        import re
+        # Удаляем HTML теги, но сохраняем ссылки если нужно
+        if self.params.get("preserve_links"):
+            text = re.sub(r'<(?!a\s)[^>]+>', '', text)
+        else:
+            text = re.sub(r'<[^>]+>', '', text)
+        return text
+    
+    def is_idempotent(self, old_text: str, new_text: str) -> bool:
+        # Проверяем, остались ли HTML теги
+        import re
+        return not re.search(r'<[^>]+>', new_text)
+    
+    def summary(self, old_text: str, new_text: str) -> str:
+        import re
+        tags_removed = len(re.findall(r'<[^>]+>', old_text))
+        return f"Удалено {tags_removed} HTML тегов"
+```
+
+### Интеграция в RAG пайплайн
+
+```python
+def setup_rag_hooks(manager: HookManager):
+    """Настройка хуков для RAG системы"""
+    
+    # Pre-обработка (очистка исходных данных)
+    manager.register_pre_hook(HTMLStripHook(), formats=["html", "htm"])
+    manager.register_pre_hook(RemoveEmptyLinesHook(), formats=None)  # Глобально
+    manager.register_pre_hook(NormalizePunctuationHook(), formats=["txt", "md"])
+    
+    # Post-обработка (финальное форматирование)
+    manager.register_post_hook(EnsureEncodingHook(), formats=None)
+    manager.register_post_hook(ChunkSizeValidatorHook(), formats=None)
+
+def process_documents(file_paths: List[str], manager: HookManager):
+    """Обработка документов с применением хуков"""
+    
+    for file_path in file_paths:
+        # Определяем формат файла
+        fmt = file_path.split('.')[-1].lower()
+        
+        # Читаем файл
+        with open(file_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+        
+        meta = {
+            "filename": file_path,
+            "format": fmt,
+            "source": "local_file"
+        }
+        
+        # Применяем pre-хуки
+        processed_text, pre_results = manager.apply_pre_hooks(text, meta, fmt)
+        
+        # Здесь может быть основная обработка (эмбеддинги, индексация и т.д.)
+        
+        # Применяем post-хуки
+        final_text, post_results = manager.apply_post_hooks(processed_text, meta, fmt)
+        
+        # Логирование результатов
+        for result in pre_results + post_results:
+            if result.get('error'):
+                print(f"Ошибка в хуке {result['hook']}: {result['error']}")
+            elif result.get('summary'):
+                print(f"{result['hook']}: {result['summary']}")
+```
+
+## Интеграция с файловой системой
+
+В контексте более широкой RAG системы, HookManager интегрируется следующим образом:
+
+```python
+# В file_processor_manager.py
+class FileProcessorManager:
+    def __init__(self):
+        self.hook_manager = HookManager()
+        self._setup_default_hooks()
+    
+    def _setup_default_hooks(self):
+        """Настройка стандартных хуков для разных форматов"""
+        from hooks import (
+            StripHTMLHook, RemoveStopwordsHook, 
+            LowerCaseHook, RemoveExtraSpacesHook
+        )
+        
+        # HTML документы
+        self.hook_manager.register_pre_hook(StripHTMLHook(), "html")
+        
+        # Текстовые документы
+        self.hook_manager.register_pre_hook(RemoveExtraSpacesHook(), ["txt", "md"])
+        
+        # Глобальная постобработка
+        self.hook_manager.register_post_hook(LowerCaseHook(), None)
+    
+    def process_file(self, file_path: str, format_hint: str = None):
+        """Обработка файла с применением хуков"""
+        # ... логика чтения файла ...
+        
+        # Применяем хуки
+        clean_text, results = self.hook_manager.apply_pre_hooks(
+            raw_text, meta, format_hint
+        )
+        
+        return clean_text, results
+```
+
+## Обработка ошибок
+
+Система спроектирована для устойчивой работы:
+
+1. **Fail-safe поведение**: При ошибке в хуке текст остается неизмененным
+2. **Продолжение цепочки**: Ошибка одного хука не останавливает обработку
+3. **Детальное логирование**: Все ошибки записываются с полным stack trace
+4. **Валидация конфликтов**: Проверка конфликтов на этапе регистрации
+
+```python
+# Пример обработки результатов с ошибками
+text, results = manager.apply_pre_hooks(input_text, meta, "txt")
+
+errors = [r for r in results if r.get('error')]
+if errors:
+    print(f"Обнаружено {len(errors)} ошибок при обработке")
+    for error_result in errors:
+        print(f"  - {error_result['hook']}: {error_result['error']}")
+
+# Текст все равно будет обработан остальными хуками
+successful_hooks = [r for r in results if not r.get('error')]
+print(f"Успешно применено хуков: {len(successful_hooks)}")
+```
+
+## Лучшие практики
+
+### 1. Проектирование хуков
+
+- **Идемпотентность**: Реализуйте `is_idempotent()` для хуков, которые могут применяться многократно
+- **Четкие конфликты**: Явно указывайте конфликтующие хуки в атрибуте `conflicts`
+- **Информативные summary**: Предоставляйте понятные описания изменений
+
+### 2. Организация хуков
+
+- **Модульность**: Разделяйте хуки по функциональности (очистка, форматирование, валидация)
+- **Порядок применения**: Учитывайте последовательность регистрации хуков
+- **Форматная специфичность**: Регистрируйте хуки только для релевантных форматов
+
+### 3. Мониторинг и отладка
+
+- **Регулярная проверка конфликтов**: Используйте `check_all_conflicts()`
+- **Анализ производительности**: Отслеживайте время выполнения через результаты
+- **Логирование изменений**: Используйте summary для понимания трансформаций
+
+## Заключение
+
+HookManager предоставляет мощную и гибкую систему для текстовой обработки в RAG пайплайне. Благодаря продуманной архитектуре, он обеспечивает надежность, расширяемость и простоту использования, позволяя легко адаптировать обработку текста под различные требования и форматы данных.
