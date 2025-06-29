@@ -4,6 +4,8 @@ import os
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 
+from modules.content_generation.content_validator import ContentValidator
+
 class LMStudioClient:
     LM_MAX_TOTAL_CHARS = 20000
     TELEGRAM_LIMIT = 4096
@@ -20,6 +22,7 @@ class LMStudioClient:
         self.top_k = config.get("top_k", None)
         self.logger = logging.getLogger("LMStudioClient")
         self.history: List[Dict[str, str]] = []
+        self.content_validator = ContentValidator(config=config)
         self._validate_config()
         self._check_health_on_init()
         self.log_dir_success = "logs/lmstudio/success"
@@ -154,11 +157,6 @@ class LMStudioClient:
                     last["content"] = last["content"][:max(0, len(last["content"]) - (total_chars - self.LM_MAX_TOTAL_CHARS))]
         return messages
 
-    def _request_shorter_content(self, prompt_template: str, topic: str, context: str, current_length: int) -> str:
-        shorter_prompt = f"{prompt_template}\n\nВАЖНО: Твой предыдущий ответ был слишком длинный ({current_length} символов). Напиши более коротко, сохрани смысл и структуру."
-        messages = self._build_messages(shorter_prompt, topic, context)
-        return self._make_request(messages)
-
     def _make_request(self, messages: List[Dict[str, str]]) -> str:
         chat_url = f"{self.base_url}/v1/chat/completions"
         payload_chat = {
@@ -235,57 +233,71 @@ class LMStudioClient:
                 self.logger.error(f"Failed to save LM prompt log: {e}")
 
     def generate_content(self, prompt_template: str, topic: str, context: str, max_tokens: Optional[int] = None) -> str:
+        """
+        Генерирует текст с учетом лимитов Telegram, с автоматическим сокращением и логированием.
+        Контент дополнительно требует пост-валидации на уровне вызывающего кода.
+        """
         max_tokens = max_tokens or self.max_tokens
         original_max_tokens = self.max_tokens
         self.max_tokens = max_tokens
         text = ""
         last_prompt = ""
+        clean_text = ""
         try:
             messages = self._build_messages(prompt_template, topic, context)
             last_prompt = messages[-1]['content'] if messages else ""
             text = self._make_request(messages)
-            self._save_lm_log(text, topic, False, last_prompt, attempt=0)
-            if not text or not text.strip():
-                self.logger.warning("LM Studio returned empty text from both endpoints.")
+            # ВАЖНО: очищаем от размышлений сразу
+            clean_text = self.content_validator.validate_content(text)
+            self._save_lm_log(clean_text, topic, False, last_prompt, attempt=0)
+            if not clean_text or not clean_text.strip():
+                self.logger.warning("LM Studio returned empty/invalid text after validation.")
                 return ""
 
-            if len(text) > self.TELEGRAM_LIMIT:
-                self.logger.warning(f"Generated content too long ({len(text)} chars), requesting shorter version")
+            # Проверяем длину только очищенного текста!
+            if len(clean_text) > self.TELEGRAM_LIMIT:
+                self.logger.warning(f"Generated content too long ({len(clean_text)} chars), requesting shorter version")
                 attempts = 0
                 max_attempts = 3
-                while len(text) > self.TELEGRAM_LIMIT and attempts < max_attempts:
+                context_for_shorter = context
+                while len(clean_text) > self.TELEGRAM_LIMIT and attempts < max_attempts:
                     attempts += 1
-                    self.logger.info(f"Attempt {attempts} to get shorter content")
-                    # Очищаем историю для предотвращения накопления длинных и коротких версий
                     self.clear_conversation_history()
-                    try:
-                        shorter_prompt = f"{prompt_template}\n\nВАЖНО: Твой предыдущий ответ был слишком длинный ({len(text)} символов). Напиши более коротко, сохрани смысл и структуру."
-                        messages = self._build_messages(shorter_prompt, topic, context)
-                        last_prompt = messages[-1]['content'] if messages else ""
-                        text = self._make_request(messages)
-                        self._save_lm_log(text, topic, False, last_prompt, attempt=attempts)
-                    except Exception as e:
-                        self.logger.warning(f"Failed to get shorter content on attempt {attempts}: {e}")
-                        if attempts == max_attempts:
-                            self.logger.warning("Max attempts reached, truncating content")
-                            text = text[:self.TELEGRAM_LIMIT-10] + "..."
-                            break
-                if len(text) <= self.TELEGRAM_LIMIT:
-                    self.logger.info(f"Successfully got shorter content ({len(text)} chars)")
+                    shorter_prompt = (
+                        f"{prompt_template}\n\nВАЖНО: Предыдущий ответ был слишком длинный ({len(clean_text)} символов). "
+                        "Сократи, убери детали, не добавляй размышления или пояснения."
+                    )
+                    messages = self._build_messages(shorter_prompt, topic, context_for_shorter)
+                    last_prompt = messages[-1]['content'] if messages else ""
+                    text = self._make_request(messages)
+                    clean_text = self.content_validator.validate_content(text)
+                    self._save_lm_log(clean_text, topic, False, last_prompt, attempt=attempts)
+                    if not clean_text or not clean_text.strip():
+                        self.logger.warning("Shorter version attempt returned empty text.")
+                        break
+                if len(clean_text) > self.TELEGRAM_LIMIT:
+                    self.logger.warning("Unable to get short enough text. Truncating and cleaning again.")
+                    # Обрезаем, затем еще раз валидируем (на случай разорванных <think>)
+                    clean_text = self.content_validator.validate_content(clean_text[:self.TELEGRAM_LIMIT-10] + "...")
 
-            # Логируем успешный результат в success, только если текст валидный и короткий
-            if text and text.strip() and len(text) <= self.TELEGRAM_LIMIT:
-                self._save_lm_log(text, topic, True, last_prompt, attempt=99)
-                # В историю только финальный вариант
-                self.add_to_history(last_prompt, text)
+            # Логируем только очищенный текст, который реально будет отправлен
+            if clean_text and clean_text.strip() and len(clean_text) <= self.TELEGRAM_LIMIT:
+                self._save_lm_log(clean_text, topic, True, last_prompt, attempt=99)
+                self.add_to_history(last_prompt, clean_text)
             else:
-                self.logger.warning("Generated content is too long or empty, not saving to success log.")
+                self.logger.warning("Generated content is too long or empty after all shortening attempts.")
 
-            return text.strip() if text else ""
+            return clean_text.strip() if clean_text else ""
         finally:
             self.max_tokens = original_max_tokens
 
     def generate_with_retry(self, prompt_template: str, topic: str, context: str, max_retries: int = 3) -> str:
+        """
+        Генерирует текст с автоматическими повторными попытками при ошибках.
+        - При HTTP 413/400 или payload error уменьшает контекст.
+        - При повторных ошибках очищает историю.
+        - Последняя попытка с минимальным контекстом.
+        """
         last_err = None
         original_context = context
         final_text = ""
@@ -316,5 +328,4 @@ class LMStudioClient:
             except Exception as e:
                 self.logger.error("Final fallback attempt failed", exc_info=True)
                 raise ValueError(f"LM Studio did not generate content after {max_retries} attempts: {last_err}")
-        # В любом случае, возвращаем только последний валидный текст
         return final_text.strip() if final_text else ""

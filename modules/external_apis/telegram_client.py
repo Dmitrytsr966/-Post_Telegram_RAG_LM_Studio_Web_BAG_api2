@@ -1,7 +1,7 @@
 import logging
 import time
 import requests
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Union, List
 
 class TelegramClient:
     TELEGRAM_API_URL = "https://api.telegram.org"
@@ -21,29 +21,44 @@ class TelegramClient:
         self.retry_attempts = config.get("retry_attempts", 3)
         self.retry_delay = config.get("retry_delay", 2)
 
+        # Кнопки по умолчанию для каждого поста
+        self.default_buttons = [
+            {
+                "text": "Всё про лизинг грузовых автомобилей",
+                "url": "https://t.me/s/gruzovye_avtomobili_v_lizing"
+            },
+            {
+                "text": "Обратиться за помощью с подбором",
+                "url": "https://t.me/Rayo1386"
+            }
+        ]
+
     @staticmethod
     def _telegram_code_units(text: str) -> int:
         """Подсчёт длины текста/caption по code units (UTF-16) — как в Telegram API."""
         return len(text.encode('utf-16-le')) // 2
 
-    def send_text_message(self, text: str) -> bool:
+    def send_text_message(self, text: str, buttons: Optional[List[Dict]] = None) -> bool:
         length = self._telegram_code_units(text)
         if length > self.max_text_length:
             self.logger.warning(f"Text message exceeds Telegram limits: {length} > {self.max_text_length} code units.")
             return False
 
+        reply_markup = self._build_inline_keyboard_markup(buttons or self.default_buttons)
+
         payload = {
             "chat_id": self.channel_id,
             "text": self.format_message(text),
             "parse_mode": self.parse_mode,
-            "disable_web_page_preview": self.disable_preview
+            "disable_web_page_preview": self.disable_preview,
+            "reply_markup": reply_markup
         }
         result = self._post_with_retry("sendMessage", json=payload)
         if not result:
             self.logger.error(f"Failed to send text message (length={length} code units).")
         return result
 
-    def send_media_message(self, text: str, media_path: str) -> bool:
+    def send_media_message(self, text: str, media_path: str, buttons: Optional[List[Dict]] = None) -> bool:
         length = self._telegram_code_units(text)
         if length > self.max_caption_length:
             self.logger.warning(f"Caption exceeds Telegram limits: {length} > {self.max_caption_length} code units.")
@@ -60,13 +75,16 @@ class TelegramClient:
             self.logger.error(f"Unsupported media format for file: {media_path}")
             return False
 
+        reply_markup = self._build_inline_keyboard_markup(buttons or self.default_buttons)
+
         try:
             with open(media_path, "rb") as file:
                 files = {media_type: file}
                 data = {
                     "chat_id": self.channel_id,
                     "caption": self.format_message(text),
-                    "parse_mode": self.parse_mode
+                    "parse_mode": self.parse_mode,
+                    "reply_markup": reply_markup
                 }
                 result = self._post_with_retry(method, data=data, files=files)
                 if not result:
@@ -75,6 +93,16 @@ class TelegramClient:
         except Exception as e:
             self.logger.exception(f"Failed to open or send media: {media_path}")
             return False
+
+    def _build_inline_keyboard_markup(self, buttons: List[Dict]) -> str:
+        """Преобразует список кнопок в JSON-строку, подходящую для reply_markup Telegram."""
+        # Каждая кнопка — отдельная строка (каждая — отдельный ряд)
+        keyboard = [[{
+            "text": btn.get("text", ""),
+            "url": btn.get("url", "")
+        }] for btn in buttons]
+        import json
+        return json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False)
 
     def _post_with_retry(self, method: str, json: dict = None, data: dict = None, files: dict = None) -> bool:
         url = f"{self.api_base}/{method}"
@@ -112,8 +140,6 @@ class TelegramClient:
         return self._post_with_retry("sendMessage", json=message_data)
 
     def format_message(self, text: str) -> str:
-        # Для parse_mode HTML Telegram сам не требует экранирования стандартных тегов,
-        # но в спорных случаях лучше экранировать спецсимволы вне тегов.
         if self.parse_mode == "HTML":
             return text  # Предполагается, что текст уже подготовлен валидатором.
         return text
