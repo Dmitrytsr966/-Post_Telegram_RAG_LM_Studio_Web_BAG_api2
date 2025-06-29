@@ -26,3 +26,107 @@ content_validator.py
     Удаление таблиц, размышлений, спецсимволов, markdown-экранирование.
     Проверяет, что текст валидный и пригоден для публикации.
     Возвращает только строку.
+
+# Python Code Refactoring Prompt
+
+## Контекст
+Нужно отрефакторить систему автопостинга в Telegram через LM Studio с RAG-системой и веб-доступом.
+
+**Проблемные файлы:** `telegram_client.py`, `content_validator.py`, `lm_client.py`, `prompt_builder.py`, `main.py`
+
+## Задачи рефакторинга
+
+### 1. Архитектурные принципы
+- **SOLID принципы**: каждый класс — одна ответственность
+- **Dependency Injection**: передавай зависимости через конструктор
+- **Factory Pattern**: для создания клиентов (Telegram, LM Studio)
+- **Strategy Pattern**: для разных типов контента и валидации
+
+### 2. Обработка ошибок
+- Используй `try-except` блоки с конкретными исключениями
+- Создай кастомные исключения для бизнес-логики
+- Логируй ошибки с контекстом через `logging`
+- Implement retry механизм для API вызовов
+
+### 3. Асинхронность
+- Переведи на `asyncio` для I/O операций
+- Используй `aiohttp` для HTTP запросов
+- `asyncio.gather()` для параллельных задач
+- Context managers для ресурсов
+
+### 4. Конфигурация
+- Вынеси все константы в `config.json`
+- Используй `pydantic` для валидации конфига
+- Environment variables для секретов
+- Отдельные конфиги для dev/prod
+
+### 5. Типизация
+- Добавь type hints везде
+- Используй `dataclasses` для структур данных
+- `Protocol` для интерфейсов
+- `Optional`, `Union`, `List` из `typing`
+
+### 6. Тестирование
+- Unit тесты с `pytest`
+- Mock внешние API с `unittest.mock`
+- Fixtures для тестовых данных
+- Coverage > 80%
+
+### 7. Код-стиль
+- `black` для форматирования
+- `isort` для импортов
+- `flake8` для линтинга
+- Docstrings в Google style
+
+### 8. Оптимизация
+- Кэширование результатов RAG поиска
+- Connection pooling для HTTP
+- Батчинг запросов к LM Studio
+- Lazy loading для больших данных
+
+## Пример структуры
+
+```python
+# config_manager.py
+from pydantic import BaseSettings
+
+class Config(BaseSettings):
+    telegram_token: str
+    lm_studio_url: str
+    rag_threshold: float = 0.8
+    
+    class Config:
+        env_file = ".env"
+
+# base_client.py  
+from abc import ABC, abstractmethod
+from typing import Protocol
+
+class MessageClient(Protocol):
+    async def send_message(self, text: str) -> bool: ...
+
+# telegram_client.py
+import asyncio
+from aiohttp import ClientSession
+
+class TelegramClient:
+    def __init__(self, token: str, session: ClientSession):
+        self.token = token
+        self.session = session
+    
+    async def send_message(self, text: str) -> bool:
+        # Implementation with proper error handling
+        pass
+```
+
+## Чек-лист
+- [ ] Убрать дублирование кода
+- [ ] Разделить классы по принципу единственной ответственности  
+- [ ] Добавить логирование с уровнями
+- [ ] Implement graceful shutdown
+- [ ] Валидация входных данных
+- [ ] Rate limiting для API
+- [ ] Мониторинг метрик (успешные/неудачные запросы)
+
+## Результат
+Получить чистый, поддерживаемый код с четкой архитектурой, готовый к масштабированию и легкому тестированию.
