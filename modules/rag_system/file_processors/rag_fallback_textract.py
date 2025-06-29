@@ -1,27 +1,35 @@
 import logging
+from typing import Optional, Callable, Dict, Any, List
 
-def extract_text(file_path: str, **kwargs) -> dict:
-    result = {
+def extract_text(
+    file_path: str,
+    extra_hooks: Optional[List[Callable]] = None,
+    logger: Optional[logging.Logger] = None,
+    **kwargs
+) -> Dict[str, Any]:
+    """
+    Заглушка fallback-парсера, если textract не установлен.
+    Возвращает ошибку, информируя, что textract не доступен.
+    """
+    logger = logger or logging.getLogger("rag_fallback_textract")
+    meta = {
+        "file_path": file_path,
+        "file_type": "fallback",
+        "parser": "rag_fallback_textract",
+        "used_fallback": True,
+        "cleaned": False,
+        "lines": 0,
+        "chars": 0,
+        "hooks_applied": [],
+        "error": "textract is not installed or not available"
+    }
+    logger.warning(
+        f"Textract fallback is not available (textract not installed). File: {file_path}"
+    )
+    return {
         "text": "",
         "success": False,
-        "error": None,
+        "error": "textract is not installed or not available",
         "cleaned": False,
-        "meta": {
-            "file_path": file_path,
-            "file_type": "fallback",
-            "parser": "rag_fallback_textract",
-            "used_fallback": True,
-        }
+        "meta": meta
     }
-    try:
-        import textract
-        text = textract.process(file_path).decode("utf-8")
-        cleaned_text = text.strip()
-        result["text"] = cleaned_text
-        result["success"] = True
-        result["meta"]["lines"] = cleaned_text.count('\n') + 1
-        result["meta"]["chars"] = len(cleaned_text)
-    except Exception as e:
-        result["error"] = str(e)
-        logging.getLogger("rag_fallback_textract").warning(f"Textract fallback failed for {file_path}: {e}")
-    return result

@@ -46,7 +46,8 @@ class ContentValidator:
         self.re_multi_spaces = re.compile(r' {2,}')
         self.re_multi_newline = re.compile(r'\n{3,}', re.MULTILINE)
         self.re_repeated_chars = re.compile(r'(.)\1{10,}')
-        self.re_md_heading = re.compile(r'^(#{2,3,4})\s+.*$', re.MULTILINE)
+        # Меняем: только удаляем ## и ### (и ####) в начале строки, не всю строку
+        self.re_md_heading = re.compile(r'(^[ \t]*#{2,4}[ \t]*)', re.MULTILINE)
         self.re_latex_block = re.compile(r"\$\$([\s\S]*?)\$\$", re.MULTILINE)
         self.re_latex_inline = re.compile(r"\$([^\$]+?)\$", re.DOTALL)
         # Markdown to Telegram HTML patterns
@@ -132,8 +133,12 @@ class ContentValidator:
         return text
 
     def _clean_junk(self, text: str) -> str:
-        # 1. Удаляем markdown-заголовки (## и ###, но не #word)
-        text = self.re_md_heading.sub('', text)
+        # 1. Удаляем только ##, ###, #### (и пробелы/табы перед ними) в начале строки, не всю строку
+        def log_and_sub_heading(m):
+            if m.group(0):
+                self.logger.info(f"Удалена решетка: '{m.group(0)}'")
+            return ''
+        text = self.re_md_heading.sub(log_and_sub_heading, text)
         # 2. Удаляем LaTeX-блоки и inline-$, оставляем формулу без маркеров
         text = self.re_latex_block.sub(lambda m: m.group(1).strip(), text)
         text = self.re_latex_inline.sub(lambda m: m.group(1).strip(), text)
