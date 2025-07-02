@@ -2,6 +2,7 @@ import sys
 import signal
 import time
 import os
+import hashlib
 
 from modules.utils.config_manager import ConfigManager
 from modules.utils.logs import get_logger, log_system_info
@@ -12,6 +13,19 @@ from modules.external_apis.web_search import WebSearchClient
 from modules.content_generation.lm_client import LMStudioClient
 from modules.content_generation.prompt_builder import PromptBuilder
 from modules.content_generation.content_validator import ContentValidator
+
+def sanitize_topic_for_filename(topic: str, max_length: int = 100) -> str:
+    # Оставляем только буквы, цифры, дефис, нижнее подчёркивание и пробел
+    safe = "".join([c if c.isalnum() or c in " _-" else "_" for c in topic])
+    safe = safe.strip().replace(" ", "_")
+    # Обрезаем до max_length символов
+    if len(safe) > max_length:
+        # Добавляем хеш, чтобы имя было уникальным
+        topic_hash = hashlib.sha1(topic.encode("utf-8")).hexdigest()[:10]
+        safe = safe[:max_length - 11] + "_" + topic_hash
+    if not safe:
+        safe = "untitled"
+    return safe
 
 class MonitoringService:
     def __init__(self, logger):
@@ -196,6 +210,17 @@ class TelegramRAGSystem:
 
                 web_results = self.web_search.search(topic)
                 web_context = self.web_search.extract_content(web_results) if web_results else ""
+
+                # --- Сохранение результатов web-поиска в inform/web/ ---
+                if web_results:
+                    # Защита от багов с длинным/невалидным именем файла
+                    safe_topic = sanitize_topic_for_filename(topic, max_length=80)
+                    try:
+                        self.web_search.save_to_inform(web_context, safe_topic, source="web")
+                        self.logger.info(f"Web search result saved for topic '{topic}' as file '{safe_topic}_web.txt'")
+                    except Exception as e:
+                        self.logger.error(f"Failed to save web search for topic '{topic}': {e}", exc_info=True)
+                # -------------------------------------------------------
                 if not isinstance(web_context, str):
                     web_context = ""
 
@@ -290,7 +315,6 @@ class TelegramRAGSystem:
                     self.monitoring.log_failure(topic, "Telegram send failed")
 
                 self.monitoring.report()
-                # Pause between posts according to config to avoid spam/ban
                 time.sleep(self.config["telegram"].get("post_interval", 15))
 
             except Exception as e:

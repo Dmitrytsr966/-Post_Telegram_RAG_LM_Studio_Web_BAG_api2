@@ -92,7 +92,14 @@ class DataCleaner(LoggingMixin):
         removed_rows = orig_row_count - len(filtered)
         self.log(f"Removed {removed_rows} useless rows out of {orig_row_count}")
         # Clean cells
-        cleaned = filtered.applymap(self.clean_cell)
+        # -- Причина изменения: applymap устарел, используем DataFrame.map по-столбцово
+        try:
+            cleaned = filtered.copy()
+            for col in cleaned.columns:
+                cleaned[col] = cleaned[col].map(self.clean_cell)
+        except Exception as e:
+            self.log(f"Failed in cleaning cells with .map: {e}", level=logging.ERROR)
+            raise DataCleaningError(f"Failed to clean cells: {e}")
         # Remove columns that are all empty after cleaning
         cleaned = cleaned.dropna(axis=1, how='all')
         removed_cols = filtered.shape[1] - cleaned.shape[1]
@@ -158,7 +165,6 @@ class ExcelFileProcessor(LoggingMixin):
         self.config = config
         self.rag_cfg = config.get("rag", {})
         self.validator_cfg = config.get("content_validator", {})
-        # SOLID: параметры только через конструктор
         self.chunk_size = self.rag_cfg.get("chunk_size", 512)
         self.chunk_overlap = self.rag_cfg.get("chunk_overlap", 50)
         self.max_context_length = self.rag_cfg.get("max_context_length", 4096)
