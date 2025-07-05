@@ -1,0 +1,116 @@
+{
+    "version": "1.0.0",
+    "environment": "production",
+    "telegram": {
+        "bot_token_file": "config/telegram_token.txt",
+        "channel_id_file": "config/telegram_channel.txt",
+        "retry_attempts": 3,
+        "retry_delay": 3.0,
+        "enable_preview": true,
+        "max_caption_length": 1024,
+        "post_interval": 10,
+        "max_retries": 3
+    },
+    "language_model": {
+        "url": "http://localhost:1234/v1/chat/completions",
+        "model_name": "qwen3-14b",
+        "max_tokens": 4096,
+        "max_chars": 20000,
+        "temperature": 0.6,
+        "timeout": 1500,
+        "history_limit": 3,
+        "system_message": "Выполняй требования, учитывай запреты, скрывай следы написания нейросетью",
+        "max_chars_with_media": 4096
+    },
+    "lm_studio": {
+        "base_url": "http://localhost:1234",
+        "model": "qwen/qwen3-14b",
+        "max_tokens": 4096,
+        "max_chars": 20000,
+        "temperature": 0.6,
+        "timeout": 1500,
+        "history_limit": 3,
+        "system_message": "Выполняй требования, учитывай запреты, скрывай следы написания нейросетью",
+        "max_chars_with_media": 4096
+    },
+    "retrieval": {
+        "chunk_size": 500,
+        "overlap": 100,
+        "top_k_title": 2,
+        "top_k_faiss": 8,
+        "top_k_final": 3,
+        "embedding_model": "all-MiniLM-L6-v2",
+        "cross_encoder": "cross-encoder/stsb-roberta-large"
+    },
+    "rag": {
+        "chunk_size": 500,
+        "chunk_overlap": 100,
+        "top_k_title": 2,
+        "top_k_faiss": 8,
+        "top_k_final": 3,
+        "embedding_model": "all-MiniLM-L6-v2",
+        "cross_encoder": "cross-encoder/stsb-roberta-large",
+        "max_context_length": 4096,
+        "media_context_length": 1024,
+        "similarity_threshold": 0.7
+    },
+    "system": {
+        "chunk_usage_limit": 10,
+        "usage_reset_days": 7,
+        "diversity_boost": 0.3,
+        "max_retries": 3,
+        "backoff_factor": 1.5
+    },
+    "paths": {
+        "data_dir": "data",
+        "log_dir": "logs",
+        "inform_dir": "inform",
+        "media_dir": "media",
+        "index_file": "data/faiss_index.idx",
+        "context_file": "data/faiss_contexts.json",
+        "usage_stats_file": "data/usage_statistics.json",
+        "processed_topics_file": "data/state.json",
+        "prompt_folders": [
+            "data/prompt_1",
+            "data/prompt_2",
+            "data/prompt_3"
+        ]
+    },
+    "temp_files": {
+        "cleanup_interval_hours": 24,
+        "max_size_mb": 1000,
+        "min_free_space_mb": 500
+    },
+    "logging": {
+        "level": "INFO",
+        "file_max_mb": 5,
+        "backup_count": 3
+    },
+    "content_validator": {
+        "remove_tables": true,
+        "max_length_no_media": 4096,
+        "max_length_with_media": 1024
+    },
+    "schedule": {
+        "interval_seconds": 900
+    },
+    "external_apis": {
+        "serper_api_key_file": "config/serper_api_key.txt",
+        "serper_endpoint": "https://google.serper.dev/search",
+        "serper_results_limit": 10
+    },
+    "serper": {
+        "api_key_file": "config/serper_api_key.txt",
+        "endpoint": "https://google.serper.dev/search",
+        "results_limit": 10
+    },
+    "processing": {
+        "max_tasks_per_run": 1,
+        "max_errors": 5,
+        "error_backoff_sec": 30,
+        "max_processing_time_sec": 300,
+        "shutdown_on_critical": true,
+        "batch_size": 1,
+        "max_file_size_mb": 100
+    }
+}
