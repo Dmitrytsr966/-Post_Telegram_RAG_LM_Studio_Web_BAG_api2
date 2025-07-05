@@ -6,12 +6,17 @@ from typing import Dict, Any, List, Optional
 
 from modules.content_generation.content_validator import ContentValidator
 
-class LMStudioClient:
+class FreeGPT4Client:
     LM_MAX_TOTAL_CHARS = 20000
     TELEGRAM_LIMIT = 4096
 
-    def __init__(self, base_url: str, model: str, config: Dict[str, Any]):
-        self.base_url = base_url.rstrip("/")
+    def __init__(self, url: str, model: str, config: Dict[str, Any]):
+        """
+        url: URL до OpenAI-compatible endpoint (например, http://localhost:1337/v1/chat/completions)
+        model: имя модели (например, gpt-4, deepseek-r1 и т.д.)
+        config: словарь с параметрами (temperature, max_tokens, history_limit, system_message и т.д.)
+        """
+        self.url = url.rstrip("/")
         self.model = model
         self.max_tokens = config.get("max_tokens", 4096)
         self.temperature = config.get("temperature", 0.7)
@@ -20,17 +25,16 @@ class LMStudioClient:
         self.system_message = config.get("system_message", None)
         self.top_p = config.get("top_p", None)
         self.top_k = config.get("top_k", None)
-        self.logger = logging.getLogger("LMStudioClient")
+        self.logger = logging.getLogger("FreeGPT4Client")
         self.history: List[Dict[str, str]] = []
         self.content_validator = ContentValidator(config=config)
-        self._validate_config()
-        self._check_health_on_init()
-        self.log_dir_success = "logs/lmstudio/success"
-        self.log_dir_failed = "logs/lmstudio/failed"
-        self.log_dir_prompts = "logs/lmstudio/prompts"
+        self.log_dir_success = "logs/freegpt4/success"
+        self.log_dir_failed = "logs/freegpt4/failed"
+        self.log_dir_prompts = "logs/freegpt4/prompts"
         os.makedirs(self.log_dir_success, exist_ok=True)
         os.makedirs(self.log_dir_failed, exist_ok=True)
         os.makedirs(self.log_dir_prompts, exist_ok=True)
+        self._validate_config()
 
     def _validate_config(self):
         assert isinstance(self.max_tokens, int) and self.max_tokens > 0, "max_tokens must be positive integer"
@@ -41,40 +45,9 @@ class LMStudioClient:
         if self.top_k is not None:
             assert isinstance(self.top_k, int) and self.top_k >= 0, "top_k must be non-negative int"
 
-    def _check_health_on_init(self):
-        status = self.health_check()
-        if status.get("status") != "ok":
-            self.logger.warning(f"LM Studio health check: {status}")
-        else:
-            self.logger.info(f"LMStudioClient connected to model '{self.model}'. Health OK.")
-
-    def health_check(self) -> dict:
-        try:
-            resp = requests.get(f"{self.base_url}/v1/models", timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            if "data" in data and any(self.model in m.get("id", "") for m in data["data"]):
-                return {"status": "ok"}
-            return {"status": "model_not_found"}
-        except Exception as e:
-            self.logger.warning(f"Health check fallback: /v1/models endpoint not found, trying /v1/chat/completions dummy call.")
-            try:
-                payload = {
-                    "model": self.model,
-                    "messages": [{"role": "user", "content": "ping"}],
-                    "max_tokens": 1,
-                    "temperature": 0,
-                }
-                resp = requests.post(f"{self.base_url}/v1/chat/completions", json=payload, timeout=10)
-                if resp.status_code in (200, 400):
-                    return {"status": "ok"}
-            except Exception as e2:
-                self.logger.error(f"Health check failed: {e2}")
-            return {"status": "unreachable"}
-
     def clear_conversation_history(self):
         self.history = []
-        self.logger.debug("LMStudioClient: conversation history cleared.")
+        self.logger.debug("FreeGPT4Client: conversation history cleared.")
 
     def add_to_history(self, user_message: str, bot_message: str):
         if user_message and isinstance(user_message, str) and user_message.strip():
@@ -134,13 +107,13 @@ class LMStudioClient:
         for key, value in replacements.items():
             prompt = prompt.replace(key, value)
         prompt = prompt.replace("nan", "").strip()
-        
+
         messages = []
         if self.system_message:
             messages.append({"role": "system", "content": self.system_message})
         messages.extend(self._clean_history())
         messages.append({"role": "user", "content": prompt})
-        
+
         total_chars = sum(len(m["content"]) for m in messages)
         if total_chars > self.LM_MAX_TOTAL_CHARS:
             self.logger.warning(f"Total LLM payload too long ({total_chars} > {self.LM_MAX_TOTAL_CHARS}), trimming prompt/history")
@@ -158,61 +131,37 @@ class LMStudioClient:
         return messages
 
     def _make_request(self, messages: List[Dict[str, str]]) -> str:
-        chat_url = f"{self.base_url}/v1/chat/completions"
-        payload_chat = {
+        payload = {
             "model": self.model,
             "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens
         }
         if self.top_p is not None:
-            payload_chat["top_p"] = self.top_p
+            payload["top_p"] = self.top_p
         if self.top_k is not None:
-            payload_chat["top_k"] = self.top_k
+            payload["top_k"] = self.top_k
 
-        self.logger.debug(f"LMStudioClient: Sending chat payload to {chat_url}: {str(payload_chat)[:800]}")
+        self.logger.debug(f"FreeGPT4Client: Sending chat payload to {self.url}: {str(payload)[:800]}")
 
         try:
-            response = requests.post(chat_url, json=payload_chat, timeout=self.timeout)
+            response = requests.post(self.url, json=payload, timeout=self.timeout)
         except Exception as e:
-            self.logger.error(f"Error during POST to LM Studio: {e}")
+            self.logger.error(f"Error during POST to FreeGPT4 API: {e}")
             return ""
         if not response.ok:
-            self.logger.error(f"LM Studio response HTTP error: {response.status_code} {response.text[:200]}")
+            self.logger.error(f"FreeGPT4 API response HTTP error: {response.status_code} {response.text[:200]}")
             return ""
-        self.logger.debug(f"LMStudioClient: raw response: {response.text[:1000]}")
+        self.logger.debug(f"FreeGPT4Client: raw response: {response.text[:1000]}")
         try:
             result = response.json()
         except Exception as e:
-            self.logger.error("Failed to decode LM Studio response as JSON", exc_info=True)
+            self.logger.error("Failed to decode FreeGPT4 API response as JSON", exc_info=True)
             result = {}
-        
-        text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
 
-        if not text:
-            self.logger.warning("Empty chat response, fallback to completions endpoint.")
-            comp_url = f"{self.base_url}/v1/completions"
-            payload = {
-                "model": self.model,
-                "prompt": messages[-1]['content'],
-                "max_tokens": self.max_tokens,
-                "temperature": self.temperature,
-                "stream": False
-            }
-            if self.top_p is not None:
-                payload["top_p"] = self.top_p
-            if self.top_k is not None:
-                payload["top_k"] = self.top_k
-            try:
-                comp_resp = requests.post(comp_url, json=payload, timeout=self.timeout)
-                comp_resp.raise_for_status()
-                comp_result = comp_resp.json()
-                text = comp_result.get("choices", [{}])[0].get("text", "")
-            except Exception as e:
-                self.logger.error(f"Failed to get completion from fallback endpoint: {e}")
-                text = ""
+        text = result.get("choices", [{}])[0].get("message", {}).get("content", "")
         if not isinstance(text, str):
-            raise ValueError("LM Studio returned non-string result.")
+            raise ValueError("FreeGPT4 API returned non-string result.")
         return text.strip()
 
     def _save_lm_log(self, text: str, topic: str, success: bool, prompt: Optional[str] = None, attempt: int = 0):
@@ -251,7 +200,7 @@ class LMStudioClient:
             clean_text = self.content_validator.validate_content(text)
             self._save_lm_log(clean_text, topic, False, last_prompt, attempt=0)
             if not clean_text or not clean_text.strip():
-                self.logger.warning("LM Studio returned empty/invalid text after validation.")
+                self.logger.warning("FreeGPT4 API returned empty/invalid text after validation.")
                 return ""
 
             # Проверяем длину только очищенного текста!
@@ -303,16 +252,16 @@ class LMStudioClient:
         final_text = ""
         for attempt in range(1, max_retries + 1):
             try:
-                self.logger.debug(f"LMStudioClient: generation attempt {attempt}/{max_retries}")
+                self.logger.debug(f"FreeGPT4Client: generation attempt {attempt}/{max_retries}")
                 text = self.generate_content(prompt_template, topic, context)
                 if text and text.strip() and len(text) <= self.TELEGRAM_LIMIT:
                     final_text = text
                     break
-                self.logger.warning(f"LM Studio generation returned empty or too long text (attempt {attempt})")
+                self.logger.warning(f"FreeGPT4 API generation returned empty or too long text (attempt {attempt})")
             except Exception as e:
                 last_err = e
                 msg = str(e)
-                self.logger.warning(f"LMStudioClient: error on attempt {attempt}: {msg}")
+                self.logger.warning(f"FreeGPT4Client: error on attempt {attempt}: {msg}")
                 if "413" in msg or "400" in msg or "payload" in msg:
                     context = context[:max(100, len(context) // 2)]
                     self.logger.warning("Reducing context and retrying...")
@@ -327,5 +276,5 @@ class LMStudioClient:
                     final_text = text
             except Exception as e:
                 self.logger.error("Final fallback attempt failed", exc_info=True)
-                raise ValueError(f"LM Studio did not generate content after {max_retries} attempts: {last_err}")
+                raise ValueError(f"FreeGPT4 API did not generate content after {max_retries} attempts: {last_err}")
         return final_text.strip() if final_text else ""

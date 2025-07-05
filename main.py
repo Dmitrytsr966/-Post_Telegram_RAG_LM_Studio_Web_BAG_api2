@@ -10,17 +10,14 @@ from modules.utils.state_manager import StateManager
 from modules.rag_system.rag_retriever import RAGRetriever
 from modules.external_apis.telegram_client import TelegramClient
 from modules.external_apis.web_search import WebSearchClient
-from modules.content_generation.lm_client import LMStudioClient
+from modules.content_generation.lm_client import FreeGPT4Client  # <-- заменено на новый клиент
 from modules.content_generation.prompt_builder import PromptBuilder
 from modules.content_generation.content_validator import ContentValidator
 
 def sanitize_topic_for_filename(topic: str, max_length: int = 100) -> str:
-    # Оставляем только буквы, цифры, дефис, нижнее подчёркивание и пробел
     safe = "".join([c if c.isalnum() or c in " _-" else "_" for c in topic])
     safe = safe.strip().replace(" ", "_")
-    # Обрезаем до max_length символов
     if len(safe) > max_length:
-        # Добавляем хеш, чтобы имя было уникальным
         topic_hash = hashlib.sha1(topic.encode("utf-8")).hexdigest()[:10]
         safe = safe[:max_length - 11] + "_" + topic_hash
     if not safe:
@@ -79,11 +76,16 @@ class TelegramRAGSystem:
             self.state_manager = StateManager(state_file="data/state.json")
             self.monitoring = MonitoringService(self.logger)
 
-            self.lm_client = LMStudioClient(
-                base_url=self.config["lm_studio"]["base_url"],
-                model=self.config["lm_studio"]["model"],
-                config=self.config["lm_studio"],
+            # --- NEW: Используем FreeGPT4Client с секцией language_model ---
+            lm_cfg = self.config_manager.get_language_model_config()
+            lm_url = lm_cfg.get("url", "http://localhost:1337/v1/chat/completions")
+            lm_model = lm_cfg.get("model_name", "gpt-4")
+            self.lm_client = FreeGPT4Client(
+                url=lm_url,
+                model=lm_model,
+                config=lm_cfg,
             )
+
             self.prompt_builder = PromptBuilder(
                 prompt_folders=self.config["paths"].get(
                     "prompt_folders",
@@ -213,7 +215,6 @@ class TelegramRAGSystem:
 
                 # --- Сохранение результатов web-поиска в inform/web/ ---
                 if web_results:
-                    # Защита от багов с длинным/невалидным именем файла
                     safe_topic = sanitize_topic_for_filename(topic, max_length=80)
                     try:
                         self.web_search.save_to_inform(web_context, safe_topic, source="web")
@@ -244,10 +245,13 @@ class TelegramRAGSystem:
                     continue
 
                 self.logger.debug(
-                    f"Prompt to LM Studio for topic '{topic}':\n{prompt[:1000]}"
+                    f"Prompt to LLM for topic '{topic}':\n{prompt[:1000]}"
                 )
 
-                max_lm_retries = self.config["lm_studio"].get("max_retries", 3)
+                max_lm_retries = (
+                    self.config.get("language_model", {}).get("max_retries")
+                    or self.config.get("system", {}).get("max_retries", 3)
+                )
                 try:
                     content = self.lm_client.generate_with_retry(
                         prompt_template,
@@ -257,11 +261,11 @@ class TelegramRAGSystem:
                     )
                 except Exception as e:
                     self.logger.error(
-                        f"LM Studio generation failed after retries for topic '{topic}': {e}"
+                        f"Text generation failed after retries for topic '{topic}': {e}"
                     )
                     self.update_processing_state(topic, success=False)
                     self.monitoring.log_failure(
-                        topic, f"LM Studio generation failed: {e}"
+                        topic, f"Text generation failed: {e}"
                     )
                     continue
 
@@ -275,7 +279,6 @@ class TelegramRAGSystem:
                     )
                     continue
 
-                # Always validate content before sending to Telegram (extra safety)
                 validated_content = self.content_validator.validate_content(content)
                 if not validated_content or not validated_content.strip():
                     self.logger.error(

@@ -5,7 +5,7 @@ from typing import Optional, Any, Dict
 
 class ConfigManager:
     """
-    Менеджер конфигураций для всей системы автопостинга с RAG и LM Studio.
+    Менеджер конфигураций для всей системы автопостинга с RAG и LLM (FreeGPT4/OpenAI-compatible).
     Гарантирует: корректную загрузку, подробную валидацию и безопасный доступ к параметрам.
     """
 
@@ -38,21 +38,24 @@ class ConfigManager:
         errors = []
         config = self.config
 
-        # Обязательные секции
-        required_sections = ["lm_studio", "rag", "telegram", "serper", "processing", "paths"]
+        # Обязательные секции (language_model вместо lm_studio)
+        required_sections = ["language_model", "rag", "telegram", "serper", "processing", "paths"]
         for section in required_sections:
             if section not in config:
                 errors.append(f"Missing required section: '{section}'")
 
-        # Проверка ключей для lm_studio
-        if "lm_studio" in config:
-            for key in ["base_url", "model", "max_tokens", "temperature", "timeout"]:
-                if key not in config["lm_studio"]:
-                    errors.append(f"Missing key '{key}' in section 'lm_studio'")
+        # Проверка ключей для language_model (OpenAI-compatible LLM)
+        if "language_model" in config:
+            for key in ["url", "model_name", "max_tokens", "temperature", "timeout"]:
+                if key not in config["language_model"]:
+                    errors.append(f"Missing key '{key}' in section 'language_model'")
 
         # Проверка ключей для rag
         if "rag" in config:
-            for key in ["embedding_model", "chunk_size", "chunk_overlap", "max_context_length", "media_context_length", "similarity_threshold"]:
+            for key in [
+                "embedding_model", "chunk_size", "chunk_overlap",
+                "max_context_length", "media_context_length", "similarity_threshold"
+            ]:
                 if key not in config["rag"]:
                     errors.append(f"Missing key '{key}' in section 'rag'")
 
@@ -88,7 +91,7 @@ class ConfigManager:
 
     def get_config_value(self, key_path: str, default: Any = None) -> Any:
         """
-        Позволяет получать значение по "пути" через точку, например: 'lm_studio.base_url'
+        Позволяет получать значение по "пути" через точку, например: 'language_model.url'
         Если не найдено — возвращает default.
         """
         keys = key_path.split(".")
@@ -129,8 +132,11 @@ class ConfigManager:
             self.logger.critical(f"Failed to read Telegram channel ID: {e}")
             raise
 
-    def get_lm_studio_config(self) -> dict:
-        return self.config.get("lm_studio", {})
+    def get_language_model_config(self) -> dict:
+        """
+        Возвращает конфиг для OpenAI-compatible/FreeGPT4 клиента.
+        """
+        return self.config.get("language_model", {})
 
     def get_rag_config(self) -> dict:
         return self.config.get("rag", {})
@@ -140,7 +146,6 @@ class ConfigManager:
         api_key = os.environ.get("SERPER_API_KEY")
         if api_key:
             return api_key
-        # Можно добавить вариант с файлом
         key_file = os.path.join("config", "serper_api_key.txt")
         if os.path.exists(key_file):
             with open(key_file, "r", encoding="utf-8") as f:
@@ -153,7 +158,6 @@ class ConfigManager:
     def get_all_config(self) -> dict:
         """Возвращает полный конфиг (для отладки, без секретных полей)."""
         safe_config = self.config.copy()
-        # Можно тут удалить/заменить чувствительные данные, если они есть
         return safe_config
 
     def save_config(self) -> None:

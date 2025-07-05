@@ -12,27 +12,18 @@
         "max_retries": 3
     },
     "language_model": {
-        "url": "http://localhost:1234/v1/chat/completions",
-        "model_name": "qwen3-14b",
+        "url": "http://localhost:1337/v1/chat/completions",    // <--- ВАЖНО: порт и путь OpenAI-compatible FreeGPT4 API!
+        "model_name": "gpt-4",                                 // <--- Лучше явно gpt-4 или другую поддерживаемую модель
         "max_tokens": 4096,
         "max_chars": 20000,
         "temperature": 0.6,
-        "timeout": 1500,
+        "timeout": 60,               // <-- timeout должен быть в секундах, а не миллисекундах (API expects seconds)
         "history_limit": 3,
         "system_message": "Выполняй требования, учитывай запреты, скрывай следы написания нейросетью",
         "max_chars_with_media": 4096
+        // Можно добавить опционально: "top_p": 0.95, "top_k": 40 и др.
     },
-    "lm_studio": {
-        "base_url": "http://localhost:1234",
-        "model": "qwen/qwen3-14b",
-        "max_tokens": 4096,
-        "max_chars": 20000,
-        "temperature": 0.6,
-        "timeout": 1500,
-        "history_limit": 3,
-        "system_message": "Выполняй требования, учитывай запреты, скрывай следы написания нейросетью",
-        "max_chars_with_media": 4096
-    },
+    // УДАЛЯЕМ или игнорируем блок lm_studio (оставьте только если нужен для обратной совместимости, но не используйте)
     "retrieval": {
         "chunk_size": 500,
         "overlap": 100,
