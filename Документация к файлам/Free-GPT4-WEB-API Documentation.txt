@@ -1,0 +1,277 @@
+# Free-GPT4-WEB-API Documentation
+
+## Системные требования
+
+- Python 3.x
+- pip (менеджер пакетов Python)
+- Git (для клонирования репозитория)
+
+## Установка и настройка
+
+### Шаг 1: Клонирование репозитория
+```bash
+git clone https://github.com/aledipa/Free-GPT4-WEB-API.git
+cd Free-GPT4-WEB-API
+```
+
+### Шаг 2: Установка зависимостей
+```bash
+pip install -r requirements.txt
+```
+
+### Основные зависимости:
+- Flask[async] - веб-фреймворк
+- g4f - библиотека для работы с GPT-4 free
+- aiohttp - асинхронные HTTP-запросы
+- aiohttp_socks - поддержка прокси
+- auth - аутентификация
+- Werkzeug - WSGI утилиты
+
+## Запуск сервера
+
+### Базовый запуск
+```bash
+python3 FreeGPT4_Server.py
+```
+
+### Запуск с параметрами
+```bash
+python3 FreeGPT4_Server.py [параметры]
+```
+
+### Доступные параметры:
+
+| Параметр | Описание | Значение по умолчанию |
+|----------|----------|----------------------|
+| `--help` | Показать справку | - |
+| `--remove-sources` | Удалить источники из ответа | false |
+| `--enable-gui` | Включить графический интерфейс | false |
+| `--private-mode` | Использовать приватный токен | false |
+| `--enable-history` | Включить историю сообщений | false |
+| `--password PASSWORD` | Установить пароль для настроек | - |
+| `--cookie-file COOKIE_FILE` | Использовать файл cookie | - |
+| `--file-input` | Поддержка файлов в качестве входных данных | false |
+| `--port PORT` | Изменить порт | 5500 |
+| `--model MODEL` | Изменить модель | gpt-4 |
+| `--provider PROVIDER` | Изменить провайдера | Bing |
+| `--keyword KEYWORD` | Добавить поддержку ключевых слов | text |
+| `--system-prompt SYSTEM_PROMPT` | Системный промпт | - |
+| `--enable-proxies` | Включить прокси | false |
+
+## Использование API
+
+### Базовый запрос
+После запуска сервера доступ к API осуществляется через HTTP-запросы по адресу:
+```
+http://127.0.0.1:5500/?text=ваш_вопрос
+```
+
+### Параметры запроса:
+- `text` - текст запроса (можно изменить через параметр `--keyword`)
+- `style` - стиль ответа (по умолчанию "balanced")
+
+### Пример запроса:
+```bash
+curl "http://127.0.0.1:5500/?text=Привет, как дела?"
+```
+
+### Работа с файлами
+Для отправки файлов используйте POST-запрос:
+```bash
+curl -s -F file=@"путь_к_файлу" http://127.0.0.1:5500/
+```
+
+## Веб-интерфейс
+
+### Активация GUI
+```bash
+python3 FreeGPT4_Server.py --enable-gui
+```
+
+### Доступ к настройкам
+- Перейдите на `/settings` или `/login` для доступа к веб-интерфейсу
+- Пример: `http://127.0.0.1:5500/settings`
+
+## Docker развертывание
+
+### Запуск контейнера
+```bash
+docker container run -v /path/to/your/cookies.json:/cookies.json:ro -p YOUR_PORT:5500 d0ckmg/free-gpt4-web-api
+```
+
+### Без файла cookies
+```bash
+docker container run -p YOUR_PORT:5500 d0ckmg/free-gpt4-web-api
+```
+
+### Docker Compose
+Создайте файл `docker-compose.yml`:
+```yaml
+version: "3.9"
+services:
+  api:
+    image: "d0ckmg/free-gpt4-web-api:latest"
+    ports:
+      - "YOUR_PORT:5500"
+    #volumes:
+    # - /path/to/your/cookies.json:/cookies.json:ro
+```
+
+Запуск:
+```bash
+docker-compose up -d
+```
+
+## Конфигурация
+
+### Настройка провайдеров
+Сервер поддерживает различные AI-провайдеры:
+- Bing (по умолчанию)
+- DeepSeek R1
+- GPT-4o
+- Другие провайдеры через библиотеку g4f
+
+### Настройка модели
+```bash
+python3 FreeGPT4_Server.py --model gpt-4 --provider Bing
+```
+
+### Использование системного промпта
+```bash
+python3 FreeGPT4_Server.py --system-prompt "Ты полезный AI-ассистент"
+```
+
+### Настройка прокси
+```bash
+python3 FreeGPT4_Server.py --enable-proxies
+```
+
+## Безопасность
+
+### Приватный режим
+```bash
+python3 FreeGPT4_Server.py --private-mode --password your_password
+```
+
+### Файл cookies
+Для провайдера Bing требуется cookie "_U":
+```bash
+python3 FreeGPT4_Server.py --cookie-file cookies.json
+```
+
+## Интеграция с другими сервисами
+
+### Siri интеграция
+Для интеграции с Siri используйте [GPTMode Apple Shortcut](https://www.icloud.com/shortcuts/bfeed30555854958bd6165fa4d82e21b).
+
+### API клиенты
+Сервер предоставляет REST API, совместимый с OpenAI API формат.
+
+## Примеры использования
+
+### Python клиент
+```python
+import requests
+
+response = requests.get("http://127.0.0.1:5500/?text=Объясни квантовую физику")
+print(response.text)
+```
+
+### JavaScript клиент
+```javascript
+fetch("http://127.0.0.1:5500/?text=Напиши стихотворение")
+  .then(response => response.text())
+  .then(data => console.log(data));
+```
+
+### curl примеры
+```bash
+# Простой запрос
+curl "http://127.0.0.1:5500/?text=Что такое машинное обучение?"
+
+# Запрос с файлом
+curl -F file=@document.pdf http://127.0.0.1:5500/
+
+# POST запрос с JSON
+curl -X POST -H "Content-Type: application/json" \
+  -d '{"text":"Анализируй этот текст"}' \
+  http://127.0.0.1:5500/
+```
+
+## Устранение неполадок
+
+### Проблемы с портом
+Если порт 5500 занят, используйте другой:
+```bash
+python3 FreeGPT4_Server.py --port 8080
+```
+
+### Проблемы с зависимостями
+Обновите pip и переустановите зависимости:
+```bash
+pip install --upgrade pip
+pip install -r requirements.txt --force-reinstall
+```
+
+### Проблемы с провайдером
+Попробуйте другого провайдера:
+```bash
+python3 FreeGPT4_Server.py --provider OpenAI
+```
+
+## Мониторинг и логирование
+
+### Включение подробного логирования
+```bash
+python3 FreeGPT4_Server.py --enable-history
+```
+
+### Остановка сервера
+Нажмите `Ctrl+C` в терминале где запущен сервер.
+
+## Ограничения и рекомендации
+
+- Демо-сервер может быть перегружен
+- Рекомендуется использовать GUI для настройки
+- Для Bing провайдера требуется cookie "_U"
+- Стиль "balanced" рекомендуется как наиболее быстрый
+- Сервер возвращает ответы в виде plain text
+
+## Дополнительные возможности
+
+### История сообщений
+```bash
+python3 FreeGPT4_Server.py --enable-history
+```
+
+### Поддержка файлов
+```bash
+python3 FreeGPT4_Server.py --file-input
+```
+
+### Кастомное ключевое слово
+```bash
+python3 FreeGPT4_Server.py --keyword query
+# Теперь используйте: http://127.0.0.1:5500/?query=ваш_вопрос
+```
+
+## Структура проекта
+
+```
+Free-GPT4-WEB-API/
+├── FreeGPT4_Server.py    # Основной сервер
+├── requirements.txt      # Зависимости
+├── README.md            # Документация
+├── docker-compose.yml   # Docker конфигурация
+└── cookies.json        # Файл cookies (опционально)
+```
+
+## Поддержка и вклад
+
+Репозиторий приветствует любые виды вкладов:
+- Исправления ошибок
+- Новые функции
+- Улучшения документации
+- Тестирование
+
+Для получения последних обновлений следите за репозиторием на GitHub: https://github.com/aledipa/Free-GPT4-WEB-API
