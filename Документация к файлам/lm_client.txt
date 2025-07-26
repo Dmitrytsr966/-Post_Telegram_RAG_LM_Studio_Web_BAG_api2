@@ -1,303 +1,162 @@
-# LMStudioClient - Документация
+### Документация для `lm_client.py`
 
-## Описание
+#### **Обзор**
+Модуль `lm_client.py` содержит класс `FreeGPT4Client` для взаимодействия с LLM через OpenAI-совместимый API. Класс предназначен для генерации текстового контента с учетом ограничений Telegram (4096 символов), интеграции с RAG-системой, валидации контента и обработки ошибок. Используется репозиторий [Free-GPT4-WEB-API](https://github.com/Simatwa/Free-GPT4-WEB-API) через Docker.
 
-`LMStudioClient` - это Python-класс для взаимодействия с локальным сервером LM Studio через REST API. Класс предоставляет высокоуровневый интерфейс для генерации текста с поддержкой контекстной истории, автоматического управления длиной контента и детального логирования.
+---
 
-## Основные возможности
+#### **Ключевые особенности**
+1. **Динамическое управление контекстом**  
+   Автоматическое сокращение истории диалога и контекста RAG для соблюдения лимита `LM_MAX_TOTAL_CHARS` (10 000 символов).
+2. **Валидация контента**  
+   Интеграция с `ContentValidator` для очистки ответов LLM (удаление тегов `<think>`, некорректных данных).
+3. **Логирование**  
+   Сохранение промптов, успешных/неудачных ответов в директориях `logs/freegpt4/`.
+4. **Механизм повторов**  
+   Автоматические повторы при ошибках API с адаптацией контекста.
+5. **Соблюдение Telegram-лимитов**  
+   Автоматическое сокращение текста до 4096 символов.
 
-- **Генерация текста** через LM Studio API с поддержкой различных параметров
-- **Управление историей диалога** с автоматическим ограничением размера
-- **Автоматическое сокращение контента** при превышении лимитов Telegram
-- **Умное управление контекстом** с учетом лимитов модели
-- **Детальное логирование** всех запросов и ответов
-- **Проверка здоровья** соединения с LM Studio
-- **Fallback механизмы** для надежности работы
+---
 
-## Установка и зависимости
+#### **Класс `FreeGPT4Client`**
 
+##### **Конструктор**
 ```python
-pip install requests logging
+def __init__(self, url: str, model: str, config: Dict[str, Any])
 ```
+**Параметры:**
+- `url`: URL OpenAI-совместимого API (например, `http://localhost:1337/v1/chat/completions`).
+- `model`: Имя модели (например, `gpt-4`).
+- `config`: Конфигурационный словарь с ключами:
+  - `max_tokens` (int, по умолчанию 4096): Макс. токенов в ответе.
+  - `temperature` (float, по умолчанию 0.7): Креативность генерации.
+  - `timeout` (int, по умолчанию 60): Таймаут запроса (сек).
+  - `history_limit` (int, по умолчанию 3): Глубина истории диалога.
+  - `system_message` (str, опционально): Системный промпт.
+  - `top_p`, `top_k` (опционально): Параметры семплирования.
 
-## Использование
+**Инициализация:**
+- Создает директории для логирования: `success`, `failed`, `prompts`.
+- Проверяет валидность конфига (`_validate_config`).
 
-### Базовая инициализация
+---
 
+#### **Публичные методы**
+
+##### **1. `clear_conversation_history()`**
+Очищает историю диалога. Вызывается при переполнении контекста или ошибках.
+
+##### **2. `add_to_history(user_message: str, bot_message: str)`**
+Добавляет сообщение пользователя/ассистента в историю.  
+**Автосокращение:** Сохраняет только `history_limit * 2` последних сообщений.
+
+##### **3. `generate_content(prompt_template: str, topic: str, context: str, max_tokens: Optional[int] = None) -> str`**
+Генерирует контент через LLM API.  
+**Параметры:**
+- `prompt_template`: Шаблон промпта с плейсхолдерами `{TOPIC}`, `{CONTEXT}`.
+- `topic`: Тема поста (подставляется в `{TOPIC}`).
+- `context`: Контекст RAG (подставляется в `{CONTEXT}`).
+- `max_tokens`: Переопределение `max_tokens` на время вызова.
+
+**Логика:**
+1. Строит сообщения с учетом лимитов (`_build_messages`).
+2. Отправляет запрос к API (`_make_request`).
+3. Валидирует и очищает ответ (`ContentValidator`).
+4. При превышении `TELEGRAM_LIMIT` (4096 символов) запускает до 3 попыток сокращения.
+5. Логирует результат в соответствующие директории.
+
+**Возвращает:** Очищенный текст или пустую строку при ошибке.
+
+##### **4. `generate_with_retry(prompt_template: str, topic: str, context: str, max_retries: int = 3) -> str`**
+Повторяет генерацию при сбоях.  
+**Стратегия повторов:**
+- При HTTP-ошибках 413/400 сокращает `context` на 50%.
+- После 3 ошибок очищает историю диалога.
+- Финальная попытка: использует первые 256 символов контекста.
+
+---
+
+#### **Приватные методы**
+
+##### **`_validate_config()`**
+Проверяет валидность параметров конфига. Выбрасывает `AssertionError` при ошибках.
+
+##### **`_clean_history() -> List[Dict[str, str]]`**
+Фильтрует историю диалога:
+- Удаляет пустые сообщения.
+- Отбрасывает сообщения с `"nan"`.
+- Сохраняет только роли `user`, `assistant`, `system`.
+
+##### **`_truncate_context_for_llm(prompt_template: str, topic: str, context: str) -> str`**
+Рассчитывает доступный размер контекста после подстановки `topic` и статических частей промпта. Возвращает усеченный `context`.
+
+##### **`_build_messages(...) -> List[Dict[str, str]]`**
+Формирует список сообщений для API:
+1. Добавляет системное сообщение (если задано).
+2. Добавляет историю диалога.
+3. Вставляет финальный промпт с подставленными `{TOPIC}`, `{CONTEXT}`.
+4. Сокращает общий размер до `LM_MAX_TOTAL_CHARS`.
+
+##### **`_make_request(messages: List[Dict[str, str]]) -> str`**
+Отправляет запрос к LLM API. Обрабатывает:
+- Таймауты/сетевые ошибки.
+- HTTP-ошибки (логирует статус и текст).
+- Невалидный JSON в ответе.
+
+**Возвращает:** Текст ответа или пустую строку при ошибке.
+
+##### **`_save_lm_log(text: str, topic: str, success: bool, prompt: Optional[str] = None, attempt: int = 0)`**
+Сохраняет лог в формате:  
+`ГГГГММДД_ЧЧММСС_attempt{N}_{ТОПИК}.txt`  
+Директории: `success`, `failed`, `prompts`.
+
+---
+
+#### **Логирование**
+- **Уровень:** `DEBUG` (детали запросов), `WARNING` (сокращение контекста), `ERROR` (сбои API).
+- **Директории:**
+  - `logs/freegpt4/success` — валидные ответы.
+  - `logs/freegpt4/failed` — пустые/невалидные ответы.
+  - `logs/freegpt4/prompts` — промпты, отправленные в API.
+
+---
+
+#### **Пример использования**
 ```python
-from lm_client import LMStudioClient
+from modules.utils.config_manager import ConfigManager
+from modules.content_generation.lm_client import FreeGPT4Client
 
-config = {
-    "max_tokens": 4096,
-    "temperature": 0.7,
-    "timeout": 60,
-    "history_limit": 3,
-    "system_message": "Ты полезный помощник.",
-    "top_p": 0.9,
-    "top_k": 40
-}
+# Загрузка конфига
+config = ConfigManager.get_config()
 
-client = LMStudioClient(
-    base_url="http://localhost:1234",
-    model="qwen2.5-14b",
-    config=config
+# Инициализация клиента
+lm_client = FreeGPT4Client(
+    url="http://localhost:1337/v1/chat/completions",
+    model="gpt-4",
+    config=config["lm_client"]
 )
-```
 
-### Генерация контента
+# Генерация поста
+prompt_template = "Напиши пост о {TOPIC} используя контекст: {CONTEXT}"
+topic = "ИИ в медицине"
+context = "ИИ помогает диагностировать рак..."  # Результат из RAG
 
-```python
-prompt_template = """
-Ты опытный аналитик. Напиши статью на тему: {TOPIC}
-Используй следующую информацию: {CONTEXT}
-"""
-
-response = client.generate_content(
+post = lm_client.generate_with_retry(
     prompt_template=prompt_template,
-    topic="Искусственный интеллект",
-    context="AI развивается быстрыми темпами..."
+    topic=topic,
+    context=context
 )
-```
 
-### Генерация с повторными попытками
-
-```python
-response = client.generate_with_retry(
-    prompt_template=prompt_template,
-    topic="Блокчейн технологии",
-    context="Блокчейн это...",
-    max_retries=3
-)
-```
-
-## API Reference
-
-### Конструктор класса
-
-```python
-def __init__(self, base_url: str, model: str, config: Dict[str, Any])
-```
-
-**Параметры:**
-- `base_url` (str): URL LM Studio сервера (например, "http://localhost:1234")
-- `model` (str): Имя модели для использования
-- `config` (Dict[str, Any]): Конфигурационные параметры
-
-**Конфигурационные параметры:**
-- `max_tokens` (int, default=4096): Максимальное количество токенов для генерации
-- `temperature` (float, default=0.7): Температура генерации (0.0-2.0)
-- `timeout` (int, default=60): Таймаут запросов в секундах
-- `history_limit` (int, default=3): Количество сообщений в истории диалога
-- `system_message` (str, optional): Системное сообщение для модели
-- `top_p` (float, optional): Top-p параметр (0.0-1.0)
-- `top_k` (int, optional): Top-k параметр
-
-### Основные методы
-
-#### generate_content()
-
-```python
-def generate_content(
-    self, 
-    prompt_template: str, 
-    topic: str, 
-    context: str, 
-    max_tokens: Optional[int] = None
-) -> str
-```
-
-Генерирует контент на основе шаблона промпта.
-
-**Параметры:**
-- `prompt_template` (str): Шаблон промпта с плейсхолдерами {TOPIC} и {CONTEXT}
-- `topic` (str): Тема для подстановки в {TOPIC}
-- `context` (str): Контекст для подстановки в {CONTEXT}
-- `max_tokens` (Optional[int]): Переопределение max_tokens для этого запроса
-
-**Возвращает:** Сгенерированный текст (str)
-
-**Особенности:**
-- Автоматически обрезает контент если он превышает лимит Telegram (4096 символов)
-- Делает до 3 попыток сокращения при превышении лимита
-- Сохраняет логи всех попыток
-
-#### generate_with_retry()
-
-```python
-def generate_with_retry(
-    self, 
-    prompt_template: str, 
-    topic: str, 
-    context: str, 
-    max_retries: int = 3
-) -> str
-```
-
-Генерирует контент с автоматическими повторными попытками при ошибках.
-
-**Параметры:**
-- `max_retries` (int, default=3): Максимальное количество попыток
-
-**Логика повторов:**
-- При HTTP 413/400 ошибках уменьшает контекст в 2 раза
-- При повторных ошибках очищает историю диалога
-- Финальная попытка с минимальным контекстом (256 символов)
-
-#### add_to_history()
-
-```python
-def add_to_history(self, user_message: str, bot_message: str)
-```
-
-Добавляет сообщения в историю диалога.
-
-**Параметры:**
-- `user_message` (str): Сообщение пользователя
-- `bot_message` (str): Ответ бота
-
-#### clear_conversation_history()
-
-```python
-def clear_conversation_history()
-```
-
-Очищает всю историю диалога.
-
-#### health_check()
-
-```python
-def health_check() -> dict
-```
-
-Проверяет доступность LM Studio сервера.
-
-**Возвращает:** Словарь со статусом:
-- `{"status": "ok"}` - сервер доступен
-- `{"status": "model_not_found"}` - модель не найдена  
-- `{"status": "unreachable"}` - сервер недоступен
-
-## Константы класса
-
-```python
-LM_MAX_TOTAL_CHARS = 20000    # Максимальный размер всего контекста для LM
-TELEGRAM_LIMIT = 4096         # Лимит символов для Telegram
-```
-
-## Структура логов
-
-Класс создает следующие папки для логирования:
-
-```
-logs/lmstudio/
-├── success/          # Успешные генерации
-├── failed/           # Неудачные попытки
-└── prompts/          # Сохраненные промпты
-```
-
-**Формат имен файлов:**
-```
-YYYYMMDD_HHMMSS_attempt{N}_{topic}.txt
-```
-
-## Обработка ошибок
-
-### Автоматическое сокращение контента
-
-При превышении лимита Telegram (4096 символов):
-
-1. Запрашивает у модели более короткую версию
-2. Делает до 3 попыток сокращения
-3. В крайнем случае обрезает текст принудительно
-
-### Управление размером контекста
-
-При превышении `LM_MAX_TOTAL_CHARS`:
-
-1. Сначала обрезает контекст
-2. Затем удаляет старые сообщения из истории
-3. В крайнем случае обрезает сам промпт
-
-### Fallback механизмы
-
-1. **Chat API недоступен** → переключение на Completions API
-2. **Модель недоступна** → попытка подключения через dummy-запрос
-3. **Превышение лимитов** → автоматическое сокращение контекста
-
-## Примеры использования
-
-### Пример 1: Базовая генерация
-
-```python
-client = LMStudioClient("http://localhost:1234", "qwen2.5-14b", {
-    "temperature": 0.8,
-    "max_tokens": 2048
-})
-
-prompt = "Напиши статью про {TOPIC}. Контекст: {CONTEXT}"
-result = client.generate_content(prompt, "Python", "Python - язык программирования")
-print(result)
-```
-
-### Пример 2: Работа с историей
-
-```python
-# Первый запрос
-response1 = client.generate_content(prompt, "AI", context1)
-client.add_to_history("Расскажи про AI", response1)
-
-# Второй запрос с учетом истории
-response2 = client.generate_content(prompt, "ML", context2)
-client.add_to_history("А теперь про ML", response2)
-
-# Очистка истории
-client.clear_conversation_history()
-```
-
-### Пример 3: Проверка здоровья
-
-```python
-status = client.health_check()
-if status["status"] == "ok":
-    print("LM Studio готов к работе")
+if post:
+    print("Сгенерирован пост:", post[:50] + "...")
 else:
-    print(f"Проблема с подключением: {status}")
+    print("Ошибка генерации!")
 ```
 
-### Пример 4: Обработка длинного контента
+---
 
-```python
-# Большой контекст будет автоматически обрезан
-large_context = "Очень длинный текст..." * 1000
-
-try:
-    result = client.generate_with_retry(
-        prompt_template=prompt,
-        topic="Тестовая тема", 
-        context=large_context,
-        max_retries=5
-    )
-    print(f"Результат ({len(result)} символов): {result}")
-except ValueError as e:
-    print(f"Ошибка генерации: {e}")
-```
-
-## Требования к LM Studio
-
-- **Версия:** LM Studio 0.3.16+
-- **API endpoints:** `/v1/chat/completions` и `/v1/completions`
-- **Формат ответа:** OpenAI-совместимый JSON
-
-## Рекомендации по использованию
-
-1. **Мониторинг ресурсов:** Следите за использованием памяти при больших контекстах
-2. **Настройка температуры:** 0.7-0.9 для креативных задач, 0.1-0.3 для аналитических
-3. **Управление историей:** Регулярно очищайте историю для освобождения памяти
-4. **Логирование:** Используйте сохраненные логи для анализа качества генерации
-5. **Тестирование:** Всегда проверяйте `health_check()` перед началом работы
-
-## Совместимость
-
-- **Python:** 3.8+
-- **LM Studio:** 0.3.16+
-- **Модели:** Любые совместимые с OpenAI API
-- **ОС:** Windows, Linux, macOS
+#### **Зависимости**
+- `content_validator.py`: Валидация и очистка контента.
+- `config.json`: Параметры `temperature`, `max_tokens`, `history_limit`.
+- Docker-контейнер: [Free-GPT4-WEB-API](https://github.com/Simatwa/Free-GPT4-WEB-API).

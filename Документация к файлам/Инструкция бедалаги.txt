@@ -1,0 +1,196 @@
+Цель: написать код на Python, который будет вести автопостинг в Telegram канал через генерацию текста в LM Studio до тех пор, пока не закончатся темы.
+Сам LM Studio должен иметь свою RAG систему и допуск к интернету по API бесплатно.
+
+Технический контекст:
+- Python 3.13
+- LM Studio 0.3.16
+- Qwen2.5-14B (поменяется на более легкую, если скрамливать нужную инфу, ума много не потребуется)
+- Windows 10
+- https://serper.dev/playground - для интернета (собирает инфу так себе, если честно)
+
+Переменные:
+- список тем в файле topics.txt
+- модель LLM не имеет значения, но обрабатывает с учетом большого объема получаемых данных (спасибо, криво настроенный RAG) генерирует текст раз в 15-20 минут.
+- 3 папки с частями промтов в формате .txt рандом названия для рандомного выбора и соединения промта один под другим
+- папка inform с инфомрацией для RAG модели
+- папка media с медиафайлами (png/jpeg/mp4...)
+- api Telegram бота
+- id канала
+- embedding model для RAG системы (мини-нейросеть для работы с RAG): all-MiniLM-L6-v2
+- файл с конфигами config.json (приложу к инструкции)
+Задача:
+
+Проработать каждый этап:
+● сбор инфы с конфига
+● взятие темы построчно с topics.txt
+● подключение RAG системы:
+1) собрать инфу с папки "inform"
+2) систематизировать ее привести к одному виду
+2.1) разные форматы будут лежать: csv, xlsx, pdf, txt, docx, html (пока что так)
+2.2) спарсить инфу с этих файлов, предварительно отфильтровав от мусора. Например: пустые ячейки, html теги
+2.3) привести всё в единый список, предварительно отформатировав в единую кодировку (вроде как в табличной форме, скину файл faiss_index.idx, вроде как он)
+2.4) разбить на чанки текст и рассортировать
+2.5) подключить embedding нейронку (А ВОЗМОЖНО ОНА САМА СОБИРАЕТ ИНФУ И КЛАСТЕРИЗУЕТ ПОД ОДНУ ТАБЛИЦУ НА ПОНЯТНОМ ЯЗЫКЕ, поэтому сюда добавил), которая будет выбирать и классифицировать по заголовку
+● Подключение к интернет поиску по API и нахождение инфы по теме топика
+  А также сохранение найденной инфы в папку "inform" для накопления своей БД.
+● взятие промта, собрав с 3 папок рандомные файлы по одному так, чтобы они были друг под другом, но в некоторых из них есть плейсхолдеры:
+  {TOPIC} — подставляется построчно из topics.txt, каждый раз новая строка.
+  {CONTEXT} — весь собранный материал из RAG и интернет-источников.
+  {UPLOADFILE} — прикладывается к посту рандомный файл из папки media. Важно: если этот плейсхолдер присутствует в шаблоне, context должен быть усечён до 1024 символов (ограничение Telegram на подпись к медиа); если нет — context может быть до 4096 символов.
+  Например:
+	1-1.txt: Соотвествуй требованиям
+	2-9.txt: Ты опытный механик грузовой техники с 15-летним стажем работы.
+		 Напиши текст на тему: {TOPIC}
+		 Используй собранную информацию для лучшего понимания: {CONTEXT}
+	3-2.txt: Требования:
+		- Тон: беспристрастный аналитик
+		- Цифры округлять до значимых значений
+		- Использовать отраслевые термины (не более 5%)
+		- Избегать маркетинговых клише
+		- Длина таблицы ≤15% текста
+● передача собранного промта в LM Studio
+● полученный ответ необходимо проверить на соотвестве правилам:
+	- в пределах ли 4098 символов (а если в промте {UPLOADFILE}, то 1024)
+		да) следующий вопрос
+		нет) скрипт просит нейросеть написать короче до тех пор, пока не получит удовлетворительный ответ
+	- есть ли таблицы, если да, то удалить
+	- если попало размышление, удалить его (обычно, выделяется <think>...</think>, но тут может быть прикол с кодировкой HTML и markdown)
+● отправка текста по Telegram API в заданный канал без медиа или с медиа {UPLOADFILE}
+● повтор цикла с "взятие темы построчно с topics.txt"
+
+
+Доп инфа мб пригодится с наработок:
+
+
+| Модуль/Файл               | Назначение                                                                                                   |
+|---------------------------|--------------------------------------------------------------------------------------------------------------|
+| main.py                   | Точка входа. Управляет жизненным циклом RAG-системы. Запуск, graceful shutdown, управление обработкой тем.   |
+| logs.py                   | Централизованная инициализация логгера для всех модулей.                                                     |
+| rag_chunk_tracker.py      | Трекер использования информации (knowledge chunks) — хранение, penalty/boost, очистка статистики.            |
+| rag_retriever.py          | Гибридный поиск: FAISS + sentence/cross-encoder; построение и обновление индекса, извлечение контекста.      |
+| rag_file_utils.py         | Универсальное извлечение текста из файлов разных форматов (txt, pdf, docx, xlsx и др.).                      |
+| rag_table_utils.py        | Обработка и анализ табличных данных для интеграции в RAG.                                                    |
+| rag_telegram.py           | Публикация сообщений и файлов в Telegram-канал через Bot API.                                                |
+| image_utils.py            | Валидация, обработка и подготовка медиафайлов для публикации в Telegram.                                     |
+| rag_text_utils.py         | Чанкинг и обработка текстовых файлов для RAG.                                                                |
+| rag_prompt_utils.py       | Сборка промптов для LLM из шаблонов и параметров.                                                            |
+| rag_lmclient.py           | Клиент для взаимодействия с языковой моделью (LLM) по API (OpenAI/локальный сервер).                         |
+| rag_langchain_tools.py    | Интеллектуальный вызов инструментов (web search, calculator, table analysis) для обогащения контекста.       |
+| search_utils.py           | Advanced RAG pipeline: альтернативная реализация поиска (ChromaDB), батчинг, семантический поиск, экспорт.   |
+| RAG_Pipeline_....py       | Интеграция ingestion, аналитики, web-интерфейса, бенчмаркинга и расширенных утилит для RAG.             
+| utils/                    | Вспомогательные классы: работа с конфигом, файлами, состоянием, исключения.   
+| config/config.json        | Конфигурация всей системы: параметры моделей, путей, лимитов, Telegram и пр.  
+
+
+- main.py управляет и агрегирует почти все модули:  
+  - инициализирует logger, retriever, lmclient, telegram, chunk tracker, обрабатывает темы и ошибки.
+- rag_retriever.py зависит от:  
+  - rag_file_utils.py (извлечение текста из файлов)
+  - rag_chunk_tracker.py (usage penalty/boost)
+- rag_lmclient.py использует:  
+  - rag_retriever.py (контекст)
+  - rag_langchain_tools.py и rag_prompt_utils.py (обогащение контекста и сборка промпта)
+- rag_telegram.py вызывается из main.py и при публикации результатов или ошибок.
+- utils/ модули используются для конфигурирования, отслеживания состояния, управления временными файлами.
+- search_utils.py и RAG_Pipeline_Extensions_Utils.py — альтернативный/расширенный стек для RAG pipeline (ChromaDB, ingestion, web UI).
+
+Старая архитектура:
+
+project_root/
+│
+├── main.py                        # Точка входа, запуск RAG-системы
+├── logs.py                        # Логгер для всех модулей
+│
+├── rag_file_utils.py              # Извлечение и обработка текстов из файлов (txt, csv, docx, pdf и др.)
+├── rag_table_utils.py             # Обработка таблиц для RAG (csv, xlsx)
+├── rag_text_utils.py              # Работа с текстом: чанкинг, чтение с разными кодировками
+├── rag_prompt_utils.py            # Генерация промпта по шаблонам, подстановка переменных
+├── rag_lmclient.py                # LMClient: взаимодействие с LLM API (LM Studio)
+├── rag_langchain_tools.py         # Инструменты для обогащения контекста (web, calc, таблицы)
+├── rag_chunk_tracker.py           # Трекинг использования чанков знаний
+├── rag_retriever.py               # Гибридный retriever: FAISS + CrossEncoder, построение индексов
+├── rag_telegram.py                # Публикация сообщений/медиа в Telegram-канал
+├── image_utils.py                 # Работа с медиафайлами: выбор, валидация, ресайз, определение типа
+├── search_utils.py                # Альтернативная/расширяемая pipeline-логика, ChromaDB, batch-обработка
+├── RAG_Pipeline_Extensions_Utils.py # Data ingestion, web-интерфейс, аналитика, расширения
+│
+├── utils/
+│   ├── config_manager.py          # Менеджер конфигураций (json-файл)
+│   ├── state_manager.py           # Трекинг состояния: обработанные/ошибочные темы, статистика
+│   ├── exceptions.py              # Кастомные exception-классы
+│   └── path_utils.py              # Безопасная проверка путей файлов
+│
+├── config/                        # Конфиги (может быть больше двух файлов, все важные настройки)
+│   ├── telegram_channel.txt       # id канала Telegram
+│   ├── telegram_token.txt         # токен Telegram-бота
+│   └── config.json                # основной json-конфиг для всей системы
+│
+├── media/                         # Хранимые/отправляемые медиафайлы (jpg, png, pdf, docx, и др.)
+│   └── ...                        # могут быть вложенные папки с файлами
+│
+├── data/
+│   ├── prompt_1/                  # txt-шаблоны для первой части промпта
+│   │   └── ... (txt)
+│   ├── prompt_2/                  # txt-шаблоны для второй части промпта
+│   │   └── ... (txt)
+│   ├── topics.txt                 # список тем, по одной на строку
+│   └── state.json                 # состояние: обработанные и неудачные темы, статистика
+│
+├── inform/                        # Файлы знаний для RAG (txt, html, doc, docx, csv, xlsx, pdf и др.)
+│   └── ... (любые поддерживаемые форматы)
+│
+└── requirements.txt               # requirements для запуска всей системы
+
+RAG-система
+2.1 Обработка файлов (file_processor.py)
+pythonclass FileProcessor:
+    def extract_text_from_file(self, file_path: str) -> str
+    def process_csv(self, file_path: str) -> str
+    def process_xlsx(self, file_path: str) -> str
+    def process_pdf(self, file_path: str) -> str
+    def process_docx(self, file_path: str) -> str
+    def process_html(self, file_path: str) -> str
+    def process_txt(self, file_path: str) -> str
+    def clean_text(self, text: str) -> str
+    def normalize_encoding(self, text: str) -> str
+Требования к обработке:
+
+Удаление HTML-тегов
+Очистка от пустых ячеек (для таблиц)
+Нормализация кодировки в UTF-8
+Фильтрация мусорных данных
+Сохранение структуры таблиц в читаемом формате
+
+2.2 Embedding и индексация (embedding_manager.py)
+pythonclass EmbeddingManager:
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2")
+    def encode_texts(self, texts: list) -> np.ndarray
+    def build_faiss_index(self, embeddings: np.ndarray) -> faiss.Index
+    def save_index(self, index: faiss.Index, path: str)
+    def load_index(self, path: str) -> faiss.Index
+    def search_similar(self, query: str, k: int = 5) -> list
+2.3 Чанкинг и индексация (rag_retriever.py)
+pythonclass RAGRetriever:
+    def __init__(self, config: dict)
+    def process_inform_folder(self, folder_path: str)
+    def chunk_text(self, text: str, chunk_size: int = 512) -> list
+    def build_knowledge_base(self)
+    def retrieve_context(self, query: str, max_length: int = 4096) -> str
+    def update_knowledge_base(self, new_content: str)
+    def get_relevant_chunks(self, topic: str, limit: int = 10) -> list
+Алгоритм работы:
+
+Сканирование папки inform/
+Извлечение текста из всех поддерживаемых форматов
+Разбиение на чанки с перекрытием
+Создание эмбеддингов для каждого чанка
+Построение FAISS индекса
+Сохранение индекса в faiss_index.idx
+
+2.4 Трекинг использования (rag_chunk_tracker.py)
+pythonclass ChunkTracker:
+    def __init__(self)
+    def track_usage(self, chunk_id: str, topic: str)
+    def get_usage_penalty(self, chunk_id: str) -> float
+    def reset_usage_stats(self)
+    def get_diverse_chunks(self, candidates: list) -> list

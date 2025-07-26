@@ -1,0 +1,192 @@
+### Документация для `config_manager.py`
+
+#### **Обзор**
+Класс `ConfigManager` централизованно управляет конфигурацией системы автопостинга. Он обеспечивает:
+1. Загрузку и валидацию конфигурационного файла `config.json`
+2. Доступ к параметрам системы через удобные методы
+3. Управление секретными данными (токены, API-ключи)
+4. Механизмы сохранения и перезагрузки конфигурации
+
+---
+
+#### **Ключевые функции**
+1. **Централизованное хранение** всех параметров системы
+2. **Строгая валидация** структуры конфигурации
+3. **Безопасное извлечение** секретных данных из файлов
+4. **Гибкий доступ** к параметрам через точечную нотацию
+5. **Отказоустойчивость** при обработке ошибок
+
+---
+
+#### **Класс `ConfigManager`**
+
+##### **Инициализация**
+```python
+def __init__(self, config_path: str = "config/config.json")
+```
+- `config_path`: Путь к конфигурационному файлу (по умолчанию `config/config.json`)
+
+**Логика при инициализации:**
+1. Создает логгер `ConfigManager`
+2. Загружает конфигурацию методом `_load_config()`
+3. При ошибке загрузки:
+   - Логирует критическую ошибку
+   - Вызывает исключение (система не может работать без конфига)
+
+---
+
+#### **Основные методы**
+
+##### **`_load_config() -> dict`**
+Загружает JSON-конфиг с диска. Обрабатывает:
+- Отсутствие файла (`FileNotFoundError`)
+- Ошибки формата JSON (`JSONDecodeError`)
+- Кодировку UTF-8
+
+##### **`validate_config() -> bool`**
+Проверяет **обязательные элементы** конфигурации:
+1. **Секции**:
+   - `language_model` (параметры LLM)
+   - `rag` (настройки RAG-системы)
+   - `telegram` (параметры телеграм-бота)
+   - `serper` (настройки поискового API)
+   - `processing` (опции обработки)
+   - `paths` (пути к данным)
+
+2. **Ключи в секциях** (пример для `language_model`):
+   - `url`, `model_name`, `max_tokens`, `temperature`, `timeout`
+
+**Возвращает:**
+- `True` если конфиг валиден
+- `False` с записью всех ошибок в лог
+
+##### **`get_config_value(key_path: str, default: Any = None) -> Any`**
+Извлекает значение по пути вида `секция.ключ.подключ`  
+Пример: `get_config_value("telegram.post_interval")`
+
+- При отсутствии ключа:
+  - Логирует предупреждение
+  - Возвращает `default`
+
+##### **Специализированные геттеры**
+| Метод                       | Описание                                  | Источник данных           |
+|-----------------------------|-------------------------------------------|---------------------------|
+| `get_telegram_token()`      | Токен Telegram-бота                       | `config/telegram_token.txt` |
+| `get_telegram_channel_id()` | ID Telegram-канала                        | `config/telegram_channel.txt` |
+| `get_language_model_config()`| Параметры LLM                             | Секция `language_model`   |
+| `get_rag_config()`          | Параметры RAG-системы                     | Секция `rag`              |
+| `get_serper_api_key()`      | Ключ API Serper (поиск)                   | Переменная окружения или файл |
+
+##### **`get_serper_api_key()`: приоритеты**
+1. Переменная окружения `SERPER_API_KEY`
+2. Файл `config/serper_api_key.txt`
+3. Ключ `api_key` в секции `serper` конфига
+
+##### **Утилиты**
+| Метод             | Описание                                  |
+|-------------------|-------------------------------------------|
+| `get_all_config()`| Возвращает весь конфиг (без секретов)     |
+| `save_config()`   | Сохраняет измененный конфиг на диск       |
+| `reload_config()` | Перезагружает конфиг с диска              |
+
+---
+
+#### **Пример конфигурационного файла (`config.json`)**
+```json
+{
+  "language_model": {
+    "url": "http://localhost:1337/v1/chat/completions",
+    "model_name": "gpt-4",
+    "max_tokens": 4096,
+    "temperature": 0.7,
+    "timeout": 60,
+    "history_limit": 3
+  },
+  "rag": {
+    "embedding_model": "text-embedding-ada-002",
+    "chunk_size": 1000,
+    "chunk_overlap": 100,
+    "max_context_length": 4000,
+    "media_context_length": 2000,
+    "similarity_threshold": 0.75
+  },
+  "telegram": {
+    "post_interval": 3600,
+    "max_retries": 3
+  },
+  "serper": {
+    "results_limit": 5,
+    "api_key": "backup_key_here"
+  },
+  "processing": {
+    "batch_size": 5,
+    "max_file_size_mb": 10
+  },
+  "paths": {
+    "media_dir": "media",
+    "prompt_folders": ["prompt_1", "prompt_2", "prompt_3"],
+    "data_dir": "data",
+    "processed_topics_file": "processed_topics.json"
+  }
+}
+```
+
+---
+
+#### **Структура директории `config/`**
+```
+config/
+├── config.json             # Основной конфиг
+├── telegram_token.txt      # Токен бота (1 строка)
+├── telegram_channel.txt    # ID канала (1 строка)
+└── serper_api_key.txt      # Ключ Serper API (1 строка)
+```
+
+---
+
+#### **Пример использования**
+```python
+from modules.utils.config_manager import ConfigManager
+
+# Инициализация
+config_manager = ConfigManager()
+
+# Валидация конфига
+if not config_manager.validate_config():
+    exit("Invalid configuration!")
+
+# Получение параметров
+lm_url = config_manager.get_config_value("language_model.url")
+token = config_manager.get_telegram_token()
+
+# Использование в других модулях
+from modules.content_generation.lm_client import FreeGPT4Client
+lm_client = FreeGPT4Client(
+    url=lm_url,
+    model="gpt-4",
+    config=config_manager.get_language_model_config()
+)
+
+# Экстренная перезагрузка конфига
+config_manager.reload_config()
+```
+
+---
+
+#### **Особенности реализации**
+1. **Секреты отдельно от конфига**:
+   - Токены и ключи хранятся в отдельных файлах
+   - Не включаются в `config.json` (безопасность версионности)
+
+2. **Жесткая валидация**:
+   - Проверяет наличие всех обязательных параметров
+   - Точно указывает на отсутствующие элементы
+
+3. **Гибкий доступ**:
+   - Точечная нотация для глубоких ключей
+   - Специализированные методы для частых запросов
+
+4. **Логирование**:
+   - Детальные сообщения об ошибках
+   - Предупреждения о недостающих параметрах
+   - Информация о успешных операциях
