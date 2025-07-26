@@ -13,6 +13,8 @@ from modules.external_apis.web_search import WebSearchClient
 from modules.content_generation.lm_client import FreeGPT4Client  # <-- заменено на новый клиент
 from modules.content_generation.prompt_builder import PromptBuilder
 from modules.content_generation.content_validator import ContentValidator
+# Добавьте этот импорт в начало main.py
+from modules.utils.content_manager import ContentManager
 
 def sanitize_topic_for_filename(topic: str, max_length: int = 100) -> str:
     safe = "".join([c if c.isalnum() or c in " _-" else "_" for c in topic])
@@ -112,6 +114,19 @@ class TelegramRAGSystem:
             self.telegram_client = TelegramClient(
                 token=token, channel_id=channel_id, config=self.config["telegram"]
             )
+            
+            # Инициализация ContentManager
+            self.content_manager = ContentManager(config=self.config)
+            self.logger.info("ContentManager initialized successfully")
+            
+            # Логирование статистики медиафайлов
+            media_stats = self.content_manager.get_media_stats()
+            self.logger.info(f"Media files available: {media_stats.get('total_files', 0)}")
+            for media_type, count in media_stats.get('by_type', {}).items():
+                self.logger.info(f"  {media_type}: {count} files")
+            
+            # Убрана очистка отсутствующих файлов - функционал больше не требуется
+                
         except Exception as e:
             self.logger.critical("Component initialization failed", exc_info=True)
             sys.exit(1)
@@ -158,7 +173,7 @@ class TelegramRAGSystem:
             self.logger.warning(
                 f"RAG context too long ({len(rag_context)} > {limit}), truncating."
             )
-            return rag_context[:limit] + "\n... [RAG контекст обрезан до 10 000 символов]"
+            return rag_context[:limit] + "\n... [RAG контекст обрезан до 10 000 символов]"
         return rag_context
 
     def combine_contexts(self, rag_context: str, web_context: str) -> str:
@@ -191,6 +206,151 @@ class TelegramRAGSystem:
         except Exception as e:
             self.logger.critical("Failed during error handling!", exc_info=True)
 
+    def determine_preferred_media_type(self, topic: str, content: str) -> str:
+        """
+        Определяет предпочтительный тип медиафайла на основе темы и контента.
+        
+        Args:
+            topic: Тема поста
+            content: Контент поста
+            
+        Returns:
+            str: Предпочтительный тип медиа ('photo', 'video', 'document') или None
+        """
+        try:
+            # Проверяем настройки из конфига
+            config_preferred = self.config.get("content_manager", {}).get("preferred_media_type")
+            if config_preferred:
+                return config_preferred
+            
+            # Логика определения типа медиа на основе контента
+            content_lower = content.lower()
+            topic_lower = topic.lower()
+            
+            # Ключевые слова для разных типов медиа
+            video_keywords = [
+                'видео', 'игра', 'стрим', 'gameplay', 'турнир', 'матч',
+                'соревнование', 'трансляция', 'эфир', 'показ'
+            ]
+            
+            document_keywords = [
+                'статистика', 'отчет', 'анализ', 'исследование', 'данные',
+                'таблица', 'график', 'диаграмма', 'руководство', 'инструкция'
+            ]
+            
+            # Проверяем на видео
+            if any(keyword in content_lower or keyword in topic_lower for keyword in video_keywords):
+                return 'video'
+            
+            # Проверяем на документы
+            if any(keyword in content_lower or keyword in topic_lower for keyword in document_keywords):
+                return 'document'
+            
+            # По умолчанию фото
+            return 'photo'
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to determine preferred media type: {e}")
+            return 'photo'
+
+    def process_content_with_media(self, content: str, topic: str) -> tuple:
+        """
+        Обрабатывает контент с возможным добавлением медиафайла.
+        
+        Args:
+            content: Валидированный контент
+            topic: Тема поста
+            
+        Returns:
+            tuple: (final_text, media_path, success)
+        """
+        try:
+            # Определяем предпочтительный тип медиа
+            preferred_media_type = self.determine_preferred_media_type(topic, content)
+            
+            # Обрабатываем контент через ContentManager
+            processed_text, media_path, processing_success = self.content_manager.process_content(
+                text=content,
+                preferred_media_type=preferred_media_type
+            )
+            
+            if not processing_success:
+                self.logger.error(f"Content processing failed for topic '{topic}'")
+                return content, None, False
+            
+            # Логируем результат обработки
+            if media_path:
+                self.logger.info(f"Content processed with media: {media_path} (type: {preferred_media_type})")
+                self.logger.info(f"Final text length: {len(processed_text)} characters")
+            else:
+                self.logger.info(f"Content processed without media (length: {len(processed_text)} characters)")
+            
+            return processed_text, media_path, True
+            
+        except Exception as e:
+            self.logger.error(f"Failed to process content with media for topic '{topic}': {e}", exc_info=True)
+            return content, None, False
+
+    def send_to_telegram(self, text: str, media_path: str, topic: str) -> bool:
+        """
+        Отправляет контент в Telegram с учетом наличия медиафайла.
+        
+        Args:
+            text: Текст для отправки
+            media_path: Путь к медиафайлу (может быть None)
+            topic: Тема поста
+            
+        Returns:
+            bool: Успешность отправки
+        """
+        max_retries = self.config["telegram"].get("max_retries", 3)
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.logger.info(f"Telegram send attempt {attempt}/{max_retries} for topic: {topic}")
+                
+                success = False
+                
+                if media_path:
+                    # Проверяем, что медиафайл существует
+                    if not os.path.exists(media_path):
+                        self.logger.error(f"Media file not found: {media_path}")
+                        # Пытаемся отправить без медиа
+                        success = self.telegram_client.send_text_message(text)
+                    else:
+                        # Отправляем с медиа
+                        success = self.telegram_client.send_media_message(
+                            text=text,
+                            media_path=media_path
+                        )
+                        
+                        if success:
+                            self.logger.info(f"Successfully sent topic '{topic}' with media: {media_path}")
+                        else:
+                            self.logger.warning(f"Failed to send with media, trying text-only for topic '{topic}'")
+                            # Fallback на текстовое сообщение
+                            success = self.telegram_client.send_text_message(text)
+                else:
+                    # Отправляем только текст
+                    success = self.telegram_client.send_text_message(text)
+                
+                if success:
+                    media_info = f" with media ({os.path.basename(media_path)})" if media_path else ""
+                    self.logger.info(f"Successfully sent topic '{topic}' to Telegram on attempt {attempt}{media_info}")
+                    return True
+                else:
+                    self.logger.warning(f"Telegram send failed for topic '{topic}' on attempt {attempt}")
+                    
+            except Exception as te:
+                self.logger.error(f"Telegram send failed (attempt {attempt}): {te}", exc_info=True)
+            
+            # Пауза между попытками
+            if attempt < max_retries:
+                time.sleep(2)
+        
+        self.logger.error(f"All {max_retries} attempts failed for topic '{topic}'")
+        return False
+
     def main_processing_loop(self):
         self.logger.info("Entering main processing loop.")
         while not self.shutdown_requested:
@@ -222,6 +382,7 @@ class TelegramRAGSystem:
                     except Exception as e:
                         self.logger.error(f"Failed to save web search for topic '{topic}': {e}", exc_info=True)
                 # -------------------------------------------------------
+                
                 if not isinstance(web_context, str):
                     web_context = ""
 
@@ -252,6 +413,7 @@ class TelegramRAGSystem:
                     self.config.get("language_model", {}).get("max_retries")
                     or self.config.get("system", {}).get("max_retries", 3)
                 )
+                
                 try:
                     content = self.lm_client.generate_with_retry(
                         prompt_template,
@@ -290,26 +452,19 @@ class TelegramRAGSystem:
                     )
                     continue
 
-                success = False
-                max_retries = self.config["telegram"].get("max_retries", 3)
-                for attempt in range(1, max_retries + 1):
-                    try:
-                        self.logger.info(f"Telegram send attempt {attempt} for topic: {topic}")
-                        success = self.telegram_client.send_text_message(validated_content)
-                        if success:
-                            self.logger.info(
-                                f"Successfully sent topic '{topic}' to Telegram on attempt {attempt}."
-                            )
-                            break
-                        else:
-                            self.logger.warning(
-                                f"Telegram send failed for topic '{topic}' on attempt {attempt}."
-                            )
-                    except Exception as te:
-                        self.logger.error(
-                            f"Telegram send failed (attempt {attempt}): {te}", exc_info=True
-                        )
-                        time.sleep(2)
+                # НОВОЕ: Обработка контента с возможным добавлением медиафайла
+                final_text, media_path, processing_success = self.process_content_with_media(
+                    validated_content, topic
+                )
+                
+                if not processing_success:
+                    self.logger.error(f"Content processing failed for topic '{topic}'")
+                    self.update_processing_state(topic, success=False)
+                    self.monitoring.log_failure(topic, "Content processing failed")
+                    continue
+
+                # Отправка в Telegram
+                success = self.send_to_telegram(final_text, media_path, topic)
 
                 self.update_processing_state(topic, success)
                 if success:
@@ -318,7 +473,11 @@ class TelegramRAGSystem:
                     self.monitoring.log_failure(topic, "Telegram send failed")
 
                 self.monitoring.report()
-                time.sleep(self.config["telegram"].get("post_interval", 15))
+                
+                # Пауза между постами
+                post_interval = self.config["telegram"].get("post_interval", 15)
+                self.logger.info(f"Waiting {post_interval} seconds before next post...")
+                time.sleep(post_interval)
 
             except Exception as e:
                 self.handle_error(topic, e)
@@ -328,6 +487,7 @@ class TelegramRAGSystem:
         self.logger.info("System starting up...")
         signal.signal(signal.SIGINT, self.graceful_shutdown)
         signal.signal(signal.SIGTERM, self.graceful_shutdown)
+        
         try:
             inform_folder = self.config["rag"].get("inform_folder", "inform/")
             self.rag_retriever.process_inform_folder(inform_folder)
@@ -337,6 +497,7 @@ class TelegramRAGSystem:
                 f"Failed to build RAG knowledge base: {e}", exc_info=True
             )
             sys.exit(1)
+        
         self.main_processing_loop()
         self.logger.info("System shut down gracefully.")
 

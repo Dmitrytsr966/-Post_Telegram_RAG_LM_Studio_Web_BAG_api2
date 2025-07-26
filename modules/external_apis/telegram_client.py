@@ -1,6 +1,9 @@
 import logging
 import time
 import requests
+import random
+import re
+import json
 from typing import Optional, Dict, Union, List
 
 class TelegramClient:
@@ -23,14 +26,12 @@ class TelegramClient:
 
         # Кнопки по умолчанию для каждого поста
         self.default_buttons = [
-            {
-                "text": "Всё про лизинг грузовых автомобилей",
-                "url": "https://t.me/s/gruzovye_avtomobili_v_lizing"
-            },
-            {
-                "text": "Обратиться за помощью с подбором",
-                "url": "https://t.me/Rayo1386"
-            }
+            [
+                {
+                    "text": "🎀 Работа моделью 🎀",
+                    "url": "https://t.me/Flagman_tm_bot"
+                }
+            ]
         ]
 
     @staticmethod
@@ -38,7 +39,56 @@ class TelegramClient:
         """Подсчёт длины текста/caption по code units (UTF-16) — как в Telegram API."""
         return len(text.encode('utf-16-le')) // 2
 
-    def send_text_message(self, text: str, buttons: Optional[List[Dict]] = None) -> bool:
+    def _replace_casino_words(self, text: str) -> str:
+        """Заменяет слова 'казино' и 'casino' на варианты с замещением 'а' и 'о' буквами из другого алфавита."""
+        def replace_russian_casino(match):
+            word = match.group(0)
+            # Для русского слова заменяем 'а' и 'о' на английские
+            result = word
+            # Заменяем все 'а' на 'a'
+            result = result.replace('а', 'a').replace('А', 'A')
+            # Заменяем все 'о' на 'o'  
+            result = result.replace('о', 'o').replace('О', 'O')
+            return result
+
+        def replace_english_casino(match):
+            word = match.group(0)
+            # Для английского слова заменяем 'a' и 'o' на русские
+            result = word
+            # Заменяем все 'a' на 'а'
+            result = result.replace('a', 'а').replace('A', 'А')
+            # Заменяем все 'o' на 'о'
+            result = result.replace('o', 'о').replace('O', 'О')
+            return result
+
+        # Заменяем русские варианты (включая через дефис)
+        # Используем простые паттерны без проблемных lookbehind переменной ширины
+        text = re.sub(r'\bказино\b', replace_russian_casino, text, flags=re.IGNORECASE)
+        text = re.sub(r'(?<!\w)казино(?!\w)', replace_russian_casino, text, flags=re.IGNORECASE)
+        text = re.sub(r'(?<=-)казино\b', replace_russian_casino, text, flags=re.IGNORECASE)
+        text = re.sub(r'\bказино(?=-)', replace_russian_casino, text, flags=re.IGNORECASE)
+        
+        # Заменяем английские варианты (включая через дефис)
+        text = re.sub(r'\bcasino\b', replace_english_casino, text, flags=re.IGNORECASE)
+        text = re.sub(r'(?<!\w)casino(?!\w)', replace_english_casino, text, flags=re.IGNORECASE)
+        text = re.sub(r'(?<=-)casino\b', replace_english_casino, text, flags=re.IGNORECASE)
+        text = re.sub(r'\bcasino(?=-)', replace_english_casino, text, flags=re.IGNORECASE)
+        
+        return text
+
+    def _check_minimum_length(self, text: str) -> bool:
+        """Проверяет, что текст содержит не менее 712 символов с учетом пробелов."""
+        return len(text) >= 712
+
+    def send_text_message(self, text: str, buttons: Optional[List] = None) -> bool:
+        # Проверка минимальной длины
+        if not self._check_minimum_length(text):
+            self.logger.warning(f"Text message too short: {len(text)} characters (minimum 712 required).")
+            return False
+
+        # Замена слов казино/casino
+        text = self._replace_casino_words(text)
+
         length = self._telegram_code_units(text)
         if length > self.max_text_length:
             self.logger.warning(f"Text message exceeds Telegram limits: {length} > {self.max_text_length} code units.")
@@ -58,7 +108,15 @@ class TelegramClient:
             self.logger.error(f"Failed to send text message (length={length} code units).")
         return result
 
-    def send_media_message(self, text: str, media_path: str, buttons: Optional[List[Dict]] = None) -> bool:
+    def send_media_message(self, text: str, media_path: str, buttons: Optional[List] = None) -> bool:
+        # Проверка минимальной длины
+        if not self._check_minimum_length(text):
+            self.logger.warning(f"Media caption too short: {len(text)} characters (minimum 712 required).")
+            return False
+
+        # Замена слов казино/casino
+        text = self._replace_casino_words(text)
+
         length = self._telegram_code_units(text)
         if length > self.max_caption_length:
             self.logger.warning(f"Caption exceeds Telegram limits: {length} > {self.max_caption_length} code units.")
@@ -94,14 +152,29 @@ class TelegramClient:
             self.logger.exception(f"Failed to open or send media: {media_path}")
             return False
 
-    def _build_inline_keyboard_markup(self, buttons: List[Dict]) -> str:
-        """Преобразует список кнопок в JSON-строку, подходящую для reply_markup Telegram."""
-        # Каждая кнопка — отдельная строка (каждая — отдельный ряд)
-        keyboard = [[{
-            "text": btn.get("text", ""),
-            "url": btn.get("url", "")
-        }] for btn in buttons]
-        import json
+    def _build_inline_keyboard_markup(self, buttons: List) -> str:
+        """Преобразует список кнопок в JSON-строку, подходящую для reply_markup Telegram.
+        Поддерживает как одномерные списки (кнопки в столбик), так и двумерные (кнопки в строки и столбцы)."""
+        
+        # Проверяем, является ли это двумерным массивом (новый формат)
+        if buttons and isinstance(buttons[0], list):
+            # Новый формат: список строк, каждая строка содержит список кнопок
+            keyboard = []
+            for row in buttons:
+                keyboard_row = []
+                for btn in row:
+                    keyboard_row.append({
+                        "text": btn.get("text", ""),
+                        "url": btn.get("url", "")
+                    })
+                keyboard.append(keyboard_row)
+        else:
+            # Старый формат: каждая кнопка — отдельная строка (каждая — отдельный ряд)
+            keyboard = [[{
+                "text": btn.get("text", ""),
+                "url": btn.get("url", "")
+            }] for btn in buttons]
+        
         return json.dumps({"inline_keyboard": keyboard}, ensure_ascii=False)
 
     def _post_with_retry(self, method: str, json: dict = None, data: dict = None, files: dict = None) -> bool:
@@ -148,6 +221,10 @@ class TelegramClient:
         return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
     def validate_message_length(self, text: str, has_media: bool) -> bool:
+        # Проверка минимальной длины
+        if not self._check_minimum_length(text):
+            return False
+        
         limit = self.max_caption_length if has_media else self.max_text_length
         return self._telegram_code_units(text) <= limit
 

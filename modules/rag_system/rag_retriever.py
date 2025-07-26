@@ -207,7 +207,7 @@ class RAGRetriever:
                     self.logger.warning(f"Failed to process file {full}: {e}", exc_info=True)
         chunked = []
         for t in texts:
-            raw_chunks = self.chunk_text(t, self.config.get("chunk_size", 512))
+            raw_chunks = self.chunk_text(t, self.config.get("chunk_size", 80))
             filtered_chunks = filter_trash_chunks(raw_chunks)
             chunked += filtered_chunks
             stats = analyze_trash_chunks(raw_chunks)
@@ -218,7 +218,7 @@ class RAGRetriever:
 
     # ========== Чанкинг ==========
 
-    def chunk_text(self, text: str, chunk_size: int = 512, overlap: Optional[int] = None) -> List[str]:
+    def chunk_text(self, text: str, chunk_size: int = 256, overlap: Optional[int] = None) -> List[str]:
         """
         Разбивает текст на чанки с перекрытием.
         Причина: Унификация входных данных.
@@ -226,7 +226,7 @@ class RAGRetriever:
         """
         if not text or chunk_size <= 0:
             return []
-        overlap = overlap if overlap is not None else self.config.get("chunk_overlap", 50)
+        overlap = overlap if overlap is not None else self.config.get("chunk_overlap", 30)
         tokens = text.split()
         step = max(chunk_size - overlap, 1)
         chunks = []
@@ -403,7 +403,7 @@ class RAGRetriever:
 
     # ========== Сервисные методы ==========
 
-    def get_relevant_chunks(self, topic: str, limit: int = 10) -> List[str]:
+    def get_relevant_chunks(self, topic: str, limit: int = 3) -> List[str]:
         """
         Возвращает релевантные чанки по теме, не более limit.
         """
