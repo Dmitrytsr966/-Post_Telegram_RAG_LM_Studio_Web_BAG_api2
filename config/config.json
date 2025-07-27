@@ -12,15 +12,40 @@
         "max_retries": 3
     },
     "language_model": {
-        "url": "http://localhost:1337/v1/chat/completions",
-        "model_name": "gpt-4",
+        "primary_endpoint": {
+            "url": "http://localhost:1337/v1/chat/completions",
+            "provider_name": "Bing",
+            "model": "gpt-4",
+            "timeout": 60
+        },
+        "fallback_endpoints": [
+            {
+                "url": "http://localhost:1338/v1/chat/completions",
+                "provider_name": "Blackbox",
+                "model": "gpt-4o",
+                "timeout": 60
+            },
+            {
+                "url": "http://localhost:1339/v1/chat/completions",
+                "provider_name": "DeepInfraChat",
+                "model": "deepseek-r1",
+                "timeout": 60
+            }
+        ],
         "max_tokens": 4096,
         "max_chars": 20000,
         "temperature": 0.6,
-        "timeout": 60,
         "history_limit": 0,
         "system_message": "Выполняй требования, учитывай запреты, скрывай следы написания нейросетью",
-        "max_chars_with_media": 8000
+        "max_chars_with_media": 8000,
+        "provider_switch_on_errors": ["400", "429", "503", "timeout", "connection_error"],
+        "max_provider_retries": 2,
+        "circuit_breaker": {
+            "enabled": true,
+            "failure_threshold": 3,
+            "pause_duration_seconds": 30,
+            "reset_timeout_seconds": 300
+        }
     },
     "content_manager": {
         "min_text_length": 1024,
@@ -32,19 +57,19 @@
         "auto_cleanup_missing_files": true
     },
     "retrieval": {
-        "chunk_size": 50,
-        "overlap": 10,
+        "chunk_size": 10,
+        "overlap": 5,
         "top_k_title": 2,
-        "top_k_faiss": 8,
+        "top_k_faiss": 4,
         "top_k_final": 3,
         "embedding_model": "all-MiniLM-L6-v2",
         "cross_encoder": "cross-encoder/stsb-roberta-large"
     },
     "rag": {
-        "chunk_size": 50,
-        "chunk_overlap": 10,
+        "chunk_size": 10,
+        "chunk_overlap": 5,
         "top_k_title": 2,
-        "top_k_faiss": 8,
+        "top_k_faiss": 4,
         "top_k_final": 3,
         "embedding_model": "all-MiniLM-L6-v2",
         "cross_encoder": "cross-encoder/stsb-roberta-large",
@@ -54,8 +79,8 @@
         "inform_folder": "inform/"
     },
     "system": {
-        "chunk_usage_limit": 10,
-        "usage_reset_days": 7,
+        "chunk_usage_limit": 10000,
+        "usage_reset_days": 1,
         "diversity_boost": 0.3,
         "max_retries": 3,
         "backoff_factor": 1.5
