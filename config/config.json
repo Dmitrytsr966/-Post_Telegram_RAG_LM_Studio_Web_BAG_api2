@@ -32,8 +32,8 @@
         "auto_cleanup_missing_files": true
     },
     "retrieval": {
-        "chunk_size": 80,
-        "overlap": 20,
+        "chunk_size": 50,
+        "overlap": 10,
         "top_k_title": 2,
         "top_k_faiss": 8,
         "top_k_final": 3,
@@ -41,8 +41,8 @@
         "cross_encoder": "cross-encoder/stsb-roberta-large"
     },
     "rag": {
-        "chunk_size": 80,
-        "chunk_overlap": 20,
+        "chunk_size": 50,
+        "chunk_overlap": 10,
         "top_k_title": 2,
         "top_k_faiss": 8,
         "top_k_final": 3,
