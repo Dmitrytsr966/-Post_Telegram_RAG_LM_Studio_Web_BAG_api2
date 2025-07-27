@@ -14,6 +14,7 @@ class PromptBuilder:
         self.logger = logging.getLogger("PromptBuilder")
         self.templates: Dict[str, List[str]] = {}
         self._last_prompt_template: Optional[str] = None
+        self._current_topic: Optional[str] = None
         self.load_prompt_templates()
 
     def load_prompt_templates(self) -> None:
@@ -112,6 +113,12 @@ class PromptBuilder:
             template = template.replace(key, value)
         return template
 
+    def get_current_topic(self) -> Optional[str]:
+        """
+        Возвращает текущую обрабатываемую тему.
+        """
+        return self._current_topic
+
     def build_prompt(self, topic: str, context: str) -> Tuple[str, str]:
         """
         Основной метод для сборки и валидации промпта.
@@ -123,6 +130,8 @@ class PromptBuilder:
         if not context or not isinstance(context, str):
             self.logger.error("Context for prompt_builder is empty or not a string.")
             raise ValueError("Context for prompt_builder is empty or not a string.")
+
+        self._current_topic = topic.strip()
 
         template_paths = self._select_random_templates()
         template_texts = [self._read_template_file(path) for path in template_paths if path]
@@ -140,7 +149,7 @@ class PromptBuilder:
             raise
 
         replacements = {
-            "{TOPIC}": topic.strip(),
+            "{TOPIC}": self._current_topic,
             "{CONTEXT}": context.strip(),
         }
         prompt = self._replace_placeholders(prompt_template, replacements)
